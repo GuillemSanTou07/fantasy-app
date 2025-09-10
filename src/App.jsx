@@ -1,18 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-// ===================== Tipos =====================
-type Pos = "PT" | "DF" | "MC" | "DL";
-interface Player { id: number; name: string; roles: Pos[]; }
-interface Lineup { PT: Array<number | null>; DF: Array<number | null>; MC: Array<number | null>; DL: Array<number | null>; }
-interface Team { name: string; formation: string; lineup: Lineup; captainId: number | null; }
-interface AppState { players: Player[]; nextId: number; teams: Team[]; points: Record<number, number>; notPlayed: Record<number, boolean>; }
-
 // ===================== Utilidades =====================
-const POS: Pos[] = ["PT", "DF", "MC", "DL"];
-const POS_COLORS: Record<Pos, string> = { PT: "bg-yellow-400", DF: "bg-blue-500", MC: "bg-green-500", DL: "bg-red-500" };
-const POS_ORDER: Record<Pos, number> = { PT: 0, DF: 1, MC: 2, DL: 3 };
-const DISPLAY_ORDER: Pos[] = ["DL", "MC", "DF", "PT"]; // visual rows (arriba->abajo)
+const POS = ["PT", "DF", "MC", "DL"];
+const POS_COLORS = { PT: "bg-yellow-400", DF: "bg-blue-500", MC: "bg-green-500", DL: "bg-red-500" };
+// Orden lógico de posiciones para ordenación (no visual)
+const POS_ORDER = { PT: 0, DF: 1, MC: 2, DL: 3 };
+// Orden VISUAL de filas en el campo (arriba → abajo). PT queda abajo.
+const DISPLAY_ORDER = ["DL", "MC", "DF", "PT"];
 
+// Formaciones de 5 jugadoras (PT-DF-MC-DL); el primer dígito es 0 ó 1 (portera/no portera)
 const FORMATIONS = [
   "0-1-1-3",
   "0-1-2-2",
@@ -25,18 +21,17 @@ const FORMATIONS = [
   "1-2-1-1",
 ];
 
-function normalizeFormation(f: string | undefined) {
-  if (!f) return "1-1-1-2";
+function normalizeFormation(f) {
   if (typeof f !== "string") return "1-1-1-2";
   const parts = f.split("-");
-  return parts.length === 3 ? `1-${f}` : f;
+  return parts.length === 3 ? `1-${f}` : f; // compat con estados antiguos 3-3-4 etc.
 }
-function formationToCounts(f: string) {
-  const [pt, d, m, a] = normalizeFormation(f).split("-").map((x) => parseInt(x, 10) || 0);
-  return { PT: pt, DF: d, MC: m, DL: a };
+function formationToCounts(f) {
+  const [pt, d, m, a] = normalizeFormation(f).split("-").map((x) => parseInt(x, 10));
+  return { PT: pt || 0, DF: d || 0, MC: m || 0, DL: a || 0 };
 }
 
-function pointsColorClass(v: number) {
+function pointsColorClass(v) {
   if (v < 0) return "text-red-600";
   if (v === 0) return "text-gray-500";
   if (v <= 5) return "text-orange-500";
@@ -44,16 +39,16 @@ function pointsColorClass(v: number) {
   return "text-blue-600";
 }
 
-function adjustPoints(pointsMap: Record<number, number>, id: number, delta: number) {
+function adjustPoints(pointsMap, id, delta) {
   const current = parseInt(String(pointsMap[id] ?? 0), 10) || 0;
   return { ...pointsMap, [id]: current + delta };
 }
 
-const hasRole = (p: Player, role: Pos) => (p.roles || []).includes(role);
-const primaryPos = (p: Player | undefined) => (p && p.roles && p.roles.length ? p.roles[0] : ("DF" as Pos));
+const hasRole = (p, role) => (p.roles || []).includes(role);
+const primaryPos = (p) => (p.roles && p.roles.length ? p.roles[0] : "DF");
 
 // ===================== Datos iniciales =====================
-const INITIAL_PLAYERS: Player[] = [
+const INITIAL_PLAYERS = [
   { id: 1, name: "Ari Rodríguez", roles: ["DL"] },
   { id: 2, name: "Paula Díaz", roles: ["MC", "DF"] },
   { id: 3, name: "Ana García", roles: ["DL"] },
@@ -70,90 +65,137 @@ const INITIAL_PLAYERS: Player[] = [
   { id: 14, name: "Alba Muñiz", roles: ["MC"] },
 ];
 
-const LS_KEY = "fantasy_amigas_duero_state_v10";
+const LS_KEY = "fantasy_amigas_duero_state_v10"; // actualizado
 
-function emptyLineupForFormation(formation: string): Lineup {
-  const counts = formationToCounts(formation);
-  const empty = (n: number) => Array.from({ length: n }, () => null);
-  return { PT: empty(counts.PT), DF: empty(counts.DF), MC: empty(counts.MC), DL: empty(counts.DL) };
-}
-
-function defaultState(): AppState {
-  const formation = "1-1-1-2";
-  const teams: Team[] = Array.from({ length: 20 }, (_, i) => ({ name: `Jugador ${i + 1}`, formation, lineup: emptyLineupForFormation(formation), captainId: null }));
+function emptyLineupForFormation(f) {
+  const counts = formationToCounts(f);
+  const empty = (n) => Array.from({ length: n }, () => null);
   return {
-    players: INITIAL_PLAYERS.slice(),
-    nextId: 15,
-    teams,
-    points: Object.fromEntries(INITIAL_PLAYERS.map((p) => [p.id, 0])),
-    notPlayed: Object.fromEntries(INITIAL_PLAYERS.map((p) => [p.id, false])),
+    PT: empty(counts.PT),
+    DF: empty(counts.DF),
+    MC: empty(counts.MC),
+    DL: empty(counts.DL),
   };
 }
 
-function loadState(): AppState {
+function defaultParticipants() {
+  const formation = "1-1-1-2";
+  return Array.from({ length: 20 }, (_, i) => ({
+    id: i + 1,
+    name: "",
+    formation,
+    lineup: emptyLineupForFormation(formation),
+    captainId: null,
+  }));
+}
+
+function defaultState() {
+  const formation = "1-1-1-2"; // 5 jugadoras (con portera)
+  const counts = formationToCounts(formation);
+  const empty = (n) => Array.from({ length: n }, () => null);
+  return {
+    players: INITIAL_PLAYERS.slice(),
+    nextId: 15,
+    formation,
+    // kept for backwards compatibility (no usado en "Equipos" por defecto)
+    lineup: { PT: empty(counts.PT), DF: empty(counts.DF), MC: empty(counts.MC), DL: empty(counts.DL) },
+    captainId: null,
+    points: Object.fromEntries(INITIAL_PLAYERS.map((p) => [p.id, 0])),
+    notPlayed: Object.fromEntries(INITIAL_PLAYERS.map((p) => [p.id, false])),
+    // NUEVO: participantes (20 slots)
+    participants: defaultParticipants(),
+  };
+}
+
+function loadState() {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw) || {};
-    const ensure = defaultState();
 
-    // Players normalization
-    let players: Player[] = Array.isArray(parsed.players) ? parsed.players : ensure.players;
-    players = players.map((p: any) => (p.roles ? p : { ...p, roles: p.pos ? [p.pos] : ["DF"] }));
+    const ensure = defaultState();
+    let players = Array.isArray(parsed.players) ? parsed.players : ensure.players;
+    players = players.map((p) => (p.roles ? p : { ...p, roles: p.pos ? [p.pos] : [] }));
 
     const basePoints = Object.fromEntries(players.map((p) => [p.id, 0]));
     const baseNotPlayed = Object.fromEntries(players.map((p) => [p.id, false]));
 
-    const parsedTeams = Array.isArray(parsed.teams) ? parsed.teams : ensure.teams;
+    const formation = normalizeFormation(parsed.formation || ensure.formation);
+    const counts = formationToCounts(formation);
+    const fixLine = (arr, n) => {
+      const current = Array.isArray(arr) ? arr.filter((x) => x !== null) : [];
+      const trimmed = current.slice(0, n);
+      while (trimmed.length < n) trimmed.push(null);
+      return trimmed;
+    };
 
-    // Normalize teams: ensure lineups sized to formation
-    const teams: Team[] = parsedTeams.map((t: any, idx: number) => {
-      const formation = normalizeFormation(t.formation || ensure.teams[idx].formation);
-      const counts = formationToCounts(formation);
-      const fixLine = (arr: any, n: number) => {
-        const current = Array.isArray(arr) ? arr.filter((x: any) => x !== null) : [];
+    const merged = {
+      ...ensure,
+      ...parsed,
+      players,
+      formation,
+      points: { ...basePoints, ...(parsed.points || {}) },
+      notPlayed: { ...baseNotPlayed, ...(parsed.notPlayed || {}) },
+    };
+
+    // lineup legacy fix
+    const L = parsed.lineup || ensure.lineup;
+    merged.lineup = {
+      PT: fixLine(L.PT, counts.PT),
+      DF: fixLine(L.DF, counts.DF),
+      MC: fixLine(L.MC, counts.MC),
+      DL: fixLine(L.DL, counts.DL),
+    };
+
+    // participants: merge and normalizar
+    const rawParts = Array.isArray(parsed.participants) ? parsed.participants : ensure.participants;
+    const parts = rawParts.slice(0, 20);
+    // fill missing up to 20
+    while (parts.length < 20) parts.push({ id: parts.length + 1, name: "", formation, lineup: emptyLineupForFormation(formation), captainId: null });
+
+    // normalize each participant
+    merged.participants = parts.map((pt, idx) => {
+      const form = normalizeFormation(pt.formation || formation);
+      const countsP = formationToCounts(form);
+      const Lp = pt.lineup || emptyLineupForFormation(form);
+      const fix = (arr, n) => {
+        const current = Array.isArray(arr) ? arr.filter((x) => x !== null) : [];
         const trimmed = current.slice(0, n);
         while (trimmed.length < n) trimmed.push(null);
         return trimmed;
       };
-      const L = t.lineup || ensure.teams[idx].lineup;
       return {
-        name: t.name ?? ensure.teams[idx].name,
-        formation,
-        captainId: t.captainId ?? null,
+        id: pt.id ?? idx + 1,
+        name: pt.name ?? "",
+        formation: form,
         lineup: {
-          PT: fixLine(L?.PT ?? [], counts.PT),
-          DF: fixLine(L?.DF ?? [], counts.DF),
-          MC: fixLine(L?.MC ?? [], counts.MC),
-          DL: fixLine(L?.DL ?? [], counts.DL),
+          PT: fix(Lp.PT, countsP.PT),
+          DF: fix(Lp.DF, countsP.DF),
+          MC: fix(Lp.MC, countsP.MC),
+          DL: fix(Lp.DL, countsP.DL),
         },
-      } as Team;
+        captainId: pt.captainId ?? null,
+      };
     });
 
-    return {
-      players,
-      nextId: parsed.nextId ?? ensure.nextId,
-      teams,
-      points: { ...basePoints, ...(parsed.points || {}) },
-      notPlayed: { ...baseNotPlayed, ...(parsed.notPlayed || {}) },
-    };
-  } catch (e) {
+    return merged;
+  } catch {
     return defaultState();
   }
 }
 
-function saveState(s: AppState) {
+function saveState(s) {
   localStorage.setItem(LS_KEY, JSON.stringify(s));
 }
 
-function usePersistentState(): [AppState, React.Dispatch<React.SetStateAction<AppState>>] {
-  const [state, setState] = useState<AppState>(loadState);
+function usePersistentState() {
+  const [state, setState] = useState(loadState);
   useEffect(() => saveState(state), [state]);
   return [state, setState];
 }
 
-// ===================== Componentes base (idénticos visualmente) =====================
-function BadgePos({ pos }: { pos: Pos }) {
+// ===================== Componentes base =====================
+function BadgePos({ pos }) {
   return (
     <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white text-xs font-semibold shadow ${POS_COLORS[pos]}`}>
       {pos}
@@ -161,7 +203,7 @@ function BadgePos({ pos }: { pos: Pos }) {
   );
 }
 
-function BadgePosMulti({ roles = [] }: { roles?: Pos[] }) {
+function BadgePosMulti({ roles = [] }) {
   const list = roles.slice(0, 3);
   const has1 = list.length === 1;
   const has2 = list.length === 2;
@@ -189,10 +231,10 @@ function BadgePosMulti({ roles = [] }: { roles?: Pos[] }) {
   );
 }
 
-function PlayerCard({ player, points, notPlayed, isCaptain, mvp }: { player: Player | null | undefined; points?: number; notPlayed?: boolean; isCaptain?: boolean; mvp?: boolean; }) {
+function PlayerCard({ player, points, notPlayed, isCaptain, mvp }) {
   if (!player) return null;
   const showC = !!isCaptain;
-  const showStar = !showC && !!mvp;
+  const showStar = !showC && !!mvp; // prioridad C > ★
   return (
     <div className="relative h-28 w-full rounded-2xl bg-white/90 backdrop-blur border border-gray-200 shadow-sm p-3 flex flex-col items-center justify-center gap-1">
       {showC && (
@@ -211,15 +253,17 @@ function PlayerCard({ player, points, notPlayed, isCaptain, mvp }: { player: Pla
         <BadgePosMulti roles={player.roles} />
       </div>
       <div className="text-[15px] font-semibold text-gray-800 text-center leading-tight mt-5">{player.name}</div>
-      <div className={`text-sm font-semibold ${notPlayed ? "text-gray-500" : pointsColorClass(points ?? 0)}`}>{notPlayed ? "No jugó" : `Pts: ${points ?? 0}`}</div>
+      <div className={`text-sm font-semibold ${notPlayed ? "text-gray-500" : pointsColorClass(points)}`}>{notPlayed ? "No jugó" : `Pts: ${points}`}</div>
     </div>
   );
 }
 
-function Pitch({ rows }: { rows: Array<{ title: Pos; players: Array<{ player: Player | null; points?: number; notPlayed?: boolean; isCaptain?: boolean; mvp?: boolean; onClick?: () => void }>; }> }) {
+// Campo con grid
+function Pitch({ rows }) {
   const GRID_COLS = 12;
   return (
     <div className="w-full rounded-3xl p-4 md:p-6 bg-gradient-to-b from-green-700 to-emerald-800 relative overflow-hidden shadow-inner">
+      {/* Líneas del campo */}
       <div className="absolute inset-0 opacity-30" aria-hidden>
         <div className="absolute inset-1 rounded-[28px] border-2 border-white/30" />
         <div className="absolute inset-0" style={{ backgroundImage: "repeating-linear-gradient(to right, rgba(255,255,255,0.18) 0, rgba(255,255,255,0.18) 2px, transparent 2px, transparent 72px)" }} />
@@ -248,7 +292,7 @@ function Pitch({ rows }: { rows: Array<{ title: Pos; players: Array<{ player: Pl
                     )}
                   </button>
                 </div>
-              ))}
+              ))} 
               {trail > 0 && <div style={{ gridColumn: `span ${trail} / span ${trail}` }} />}
             </div>
           );
@@ -258,7 +302,7 @@ function Pitch({ rows }: { rows: Array<{ title: Pos; players: Array<{ player: Pl
   );
 }
 
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode; }) {
+function TabButton({ active, onClick, children }) {
   return (
     <button
       type="button"
@@ -270,7 +314,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   );
 }
 
-function ConfirmDialog({ open, title, body, onConfirm, onCancel }: { open: boolean; title: string; body: string; onConfirm: () => void; onCancel: () => void; }) {
+function ConfirmDialog({ open, title, body, onConfirm, onCancel }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
@@ -287,7 +331,7 @@ function ConfirmDialog({ open, title, body, onConfirm, onCancel }: { open: boole
   );
 }
 
-function FormationPicker({ value, onChange }: { value: string; onChange: (f: string) => void }) {
+function FormationPicker({ value, onChange }) {
   return (
     <div className="flex flex-wrap gap-2">
       {FORMATIONS.map((f) => {
@@ -309,34 +353,47 @@ function FormationPicker({ value, onChange }: { value: string; onChange: (f: str
 }
 
 // ===================== App principal =====================
-export default function AppFantasy(): JSX.Element {
+export default function AppFantasy() {
   const [state, setState] = usePersistentState();
-  const [tab, setTab] = useState<"teams" | "totw" | "scores" | "ranking">("teams");
-  const [modal, setModal] = useState<{ teamIndex: number; role: Pos; index: number } | null>(null);
-  const [confirm, setConfirm] = useState<{ open: boolean; title: string; body: string; onYes: (() => void) | null }>({ open: false, title: "", body: "", onYes: null });
+  const [tab, setTab] = useState("equipos"); // "equipos" | "totw" | "scores" | "clasificacion"
+  const [modal, setModal] = useState(null); // { role, index, participantIndex }
+  const [confirm, setConfirm] = useState({ open: false, title: "", body: "", onYes: null });
+  const [addOpen, setAddOpen] = useState(false);
+  const [newPlayer, setNewPlayer] = useState({ name: "", pos: "DF" });
 
-  // Selector para elegir qué "campo" (team slot) editar
-  const [selectedTeam, setSelectedTeam] = useState<number>(0); // 0..19
+  // Para la pestaña Equipos
+  const [selectedParticipant, setSelectedParticipant] = useState(0); // 0..19
 
   const players = state.players;
   const idToPlayer = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p])), [players]);
 
-  // Calculadores de puntos por equipo
-  const teamPoints = useMemo(() => {
-    return state.teams.map((team) => {
-      const fielded = Object.values(team.lineup).flat().filter(Boolean) as number[];
-      let total = 0;
-      for (const id of fielded) {
-        if (state.notPlayed[id]) continue;
-        const base = state.points[id] || 0;
-        const bonus = id === team.captainId ? base : 0; // x2
-        total += base + bonus;
-      }
-      return total;
-    });
-  }, [state.teams, state.points, state.notPlayed]);
+  // Puntos del equipo seleccionado (participant) (suma base + bonus capitana)
+  function participantPoints(part) {
+    if (!part) return 0;
+    const fielded = Object.values(part.lineup).flat().filter(Boolean);
+    let total = 0;
+    for (const id of fielded) {
+      if (state.notPlayed[id]) continue;
+      const base = state.points[id] || 0;
+      const bonus = id === part.captainId ? base : 0; // x2
+      total += base + bonus;
+    }
+    return total;
+  }
+  function participantAvg(part) {
+    if (!part) return 0;
+    const ids = Object.values(part.lineup).flat().filter(Boolean).filter((id) => !state.notPlayed[id]);
+    if (ids.length === 0) return 0;
+    let sum = 0;
+    for (const id of ids) {
+      const base = state.points[id] || 0;
+      const bonus = id === part.captainId ? base : 0;
+      sum += base + bonus;
+    }
+    return Math.round((sum / ids.length) * 10) / 10;
+  }
 
-  // Equipo de la semana (global top5 por puntos)
+  // Equipo de la semana (Top 5) + MVP (sin cambios)
   const totw = useMemo(() => {
     const scored = players
       .filter((p) => !state.notPlayed[p.id])
@@ -346,68 +403,80 @@ export default function AppFantasy(): JSX.Element {
     const ids = scored.map((x) => x.id);
     const mvpId = ids[0] || null;
     const total = scored.reduce((acc, x) => acc + x.pts, 0);
-    const groups: Record<Pos, number[]> = { PT: [], DF: [], MC: [], DL: [] };
-    ids.forEach((id) => groups[primaryPos(idToPlayer[id])].push(id));
+    const groups = { PT: [], DF: [], MC: [], DL: [] };
+    ids.forEach((id) => {
+      const p = idToPlayer[id];
+      groups[primaryPos(p)].push(id);
+    });
     return { groups, mvpId, total };
   }, [players, state.points, state.notPlayed, idToPlayer]);
 
-  // ======== Acciones compartidas ========
-  function openSlot(teamIndex: number, role: Pos, index: number) { setModal({ teamIndex, role, index }); }
+  // ======== Acciones ========
+  function openSlot(role, index, participantIndex = null) {
+    setModal({ role, index, participantIndex });
+  }
 
-  function assignToSlot(id: number) {
+  function assignToSlotForTarget(id) {
     if (!modal) return;
-    setState((s) => {
-      const teams = s.teams.map((t, idx) => {
-        if (idx !== modal.teamIndex) return t;
-        // remove this id from other slots of the same team
-        const lineup = Object.fromEntries(Object.entries(t.lineup).map(([r, arr]) => [r, arr.map((x) => (x === id ? null : x))])) as Lineup;
-        lineup[modal.role] = lineup[modal.role].map((x, i) => (i === modal.index ? id : x));
-        return { ...t, lineup };
+    const { role, index, participantIndex } = modal;
+    if (participantIndex === null) {
+      // legacy: edit global lineup (kept for compatibility)
+      setState((s) => {
+        const lineup = Object.fromEntries(Object.entries(s.lineup).map(([r, arr]) => [r, arr.map((x) => (x === id ? null : x))]));
+        lineup[role][index] = id;
+        return { ...s, lineup };
       });
-      return { ...s, teams };
-    });
+    } else {
+      // assign in participant's lineup (prevent duplicate in same participant)
+      setState((s) => {
+        const parts = s.participants.slice();
+        const pt = { ...parts[participantIndex] };
+        // remove id if already present in other slots of same participant
+        pt.lineup = Object.fromEntries(Object.entries(pt.lineup).map(([r, arr]) => [r, arr.map((x) => (x === id ? null : x))]));
+        pt.lineup[role] = pt.lineup[role].map((x, i) => (i === index ? id : x));
+        parts[participantIndex] = pt;
+        return { ...s, participants: parts };
+      });
+    }
     setModal(null);
   }
 
-  function clearSlot() {
+  function clearSlotForTarget() {
     if (!modal) return;
-    setState((s) => {
-      const teams = s.teams.map((t, idx) => {
-        if (idx !== modal.teamIndex) return t;
-        const lineup = { ...t.lineup } as Lineup;
-        lineup[modal.role] = lineup[modal.role].map((x, i) => (i === modal.index ? null : x));
-        return { ...t, lineup };
+    const { role, index, participantIndex } = modal;
+    if (participantIndex === null) {
+      setState((s) => {
+        const lineup = { ...s.lineup };
+        lineup[role] = lineup[role].map((x, i) => (i === index ? null : x));
+        return { ...s, lineup };
       });
-      return { ...s, teams };
-    });
+    } else {
+      setState((s) => {
+        const parts = s.participants.slice();
+        const pt = { ...parts[participantIndex] };
+        pt.lineup = { ...pt.lineup, [role]: pt.lineup[role].map((x, i) => (i === index ? null : x)) };
+        parts[participantIndex] = pt;
+        return { ...s, participants: parts };
+      });
+    }
     setModal(null);
   }
 
-  function changeFormationForTeam(teamIndex: number, newF: string) {
+  function changeParticipantFormation(pi, newF) {
     setState((s) => {
-      const t = s.teams[teamIndex];
-      const counts = formationToCounts(newF);
-      const resize = (arr: Array<number | null>, n: number) => {
-        const current = arr.filter((x) => x !== null) as number[];
-        const trimmed = current.slice(0, n);
-        while (trimmed.length < n) trimmed.push(null);
-        return trimmed;
-      };
-      const newLineup: Lineup = {
-        PT: resize(t.lineup.PT, counts.PT),
-        DF: resize(t.lineup.DF, counts.DF),
-        MC: resize(t.lineup.MC, counts.MC),
-        DL: resize(t.lineup.DL, counts.DL),
-      };
-      const teams = s.teams.slice();
-      teams[teamIndex] = { ...t, formation: newF, lineup: newLineup };
-      return { ...s, teams };
+      const parts = s.participants.slice();
+      const pt = { ...parts[pi] };
+      pt.formation = newF;
+      pt.lineup = emptyLineupForFormation(newF);
+      pt.captainId = null;
+      parts[pi] = pt;
+      return { ...s, participants: parts };
     });
   }
 
-  function changePoints(id: number, delta: number) { setState((s) => ({ ...s, points: adjustPoints(s.points, id, delta) })); }
+  function changePoints(id, delta) { setState((s) => ({ ...s, points: adjustPoints(s.points, id, delta) })); }
 
-  function askConfirm(title: string, body: string, onYes: () => void) { setConfirm({ open: true, title, body, onYes }); }
+  function askConfirm(title, body, onYes) { setConfirm({ open: true, title, body, onYes }); }
 
   function resetPoints() {
     askConfirm("Reiniciar puntos", "Pondrá todos los puntos a 0 y desmarcará 'No jugó' para todas las jugadoras.", () => {
@@ -416,12 +485,14 @@ export default function AppFantasy(): JSX.Element {
     });
   }
 
-  function addPlayer(name: string, pos: Pos) {
-    const trimmed = name.trim();
-    if (!trimmed) return alert("Introduce nombre y apellidos");
+  function addPlayer() {
+    const name = newPlayer.name.trim();
+    const pos = newPlayer.pos;
+    if (!name) return alert("Introduce nombre y apellidos");
+    if (!POS.includes(pos)) return alert("Posición inválida");
     setState((s) => {
       const id = s.nextId;
-      const player: Player = { id, name: trimmed, roles: [pos] };
+      const player = { id, name, roles: [pos] };
       return {
         ...s,
         players: [...s.players, player],
@@ -430,25 +501,28 @@ export default function AppFantasy(): JSX.Element {
         notPlayed: { ...s.notPlayed, [id]: false },
       };
     });
+    setAddOpen(false);
+    setNewPlayer({ name: "", pos: "DF" });
   }
 
   // ========= Derivados =========
-  const selectedTeamObj = state.teams[selectedTeam];
-  const counts = formationToCounts(selectedTeamObj.formation);
+  const currentParticipant = state.participants[selectedParticipant];
 
-  const rowsForSelected = useMemo(() => {
-    const order = DISPLAY_ORDER.filter((r) => counts[r] > 0);
+  const rowsForParticipant = useMemo(() => {
+    const part = currentParticipant;
+    if (!part) return [];
+    const order = DISPLAY_ORDER.filter((r) => formationToCounts(part.formation)[r] > 0); // orden visual
     return order.map((role) => ({
       title: role,
-      players: selectedTeamObj.lineup[role].map((id, i) => ({
+      players: part.lineup[role].map((id, i) => ({
         player: id ? idToPlayer[id] : null,
         points: id ? state.points[id] : 0,
         notPlayed: id ? state.notPlayed[id] : false,
-        isCaptain: id === selectedTeamObj.captainId,
-        onClick: () => openSlot(selectedTeam, role as Pos, i),
+        isCaptain: id === part.captainId,
+        onClick: () => openSlot(role, i, selectedParticipant),
       })),
     }));
-  }, [selectedTeamObj, state.points, state.notPlayed, idToPlayer, selectedTeam]);
+  }, [currentParticipant, idToPlayer, state.points, state.notPlayed, selectedParticipant]);
 
   // ===================== Vistas =====================
   function ViewTOTW() {
@@ -475,7 +549,6 @@ export default function AppFantasy(): JSX.Element {
           <div className="text-sm font-bold text-black">Total: {totw.total}</div>
         </div>
         <Pitch rows={rowsData} />
-        {/* MVP card identical to previous design */}
         {(() => {
           const id = totw.mvpId;
           if (!id) return null;
@@ -513,78 +586,115 @@ export default function AppFantasy(): JSX.Element {
     );
   }
 
-  function ViewTeams() {
-    const used = new Set(Object.values(selectedTeamObj.lineup).flat().filter(Boolean));
-    const bench = players
-      .filter((p) => !used.has(p.id))
-      .map((p) => ({ id: p.id, p, pts: state.points[p.id] || 0, np: state.notPlayed[p.id] }));
+  function ViewEquipos() {
+    const bench = players.map((p) => ({ id: p.id, p, pts: state.points[p.id] || 0, np: state.notPlayed[p.id] }));
+
+    const part = currentParticipant;
 
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-semibold">Campo</label>
-            <div>
-              <select className="rounded-full border px-3 py-2" value={selectedTeam} onChange={(e) => setSelectedTeam(Number(e.target.value))}>
-                {state.teams.map((t, i) => (
-                  <option key={i} value={i}>Campo {i + 1} — {t.name || `Jugador ${i + 1}`}</option>
-                ))}
-              </select>
+        <div className="grid md:grid-cols-[minmax(0,720px)_1fr] gap-6 items-start">
+          {/* Pitch y controles del participante a la izquierda */}
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-semibold text-gray-800">Participante</div>
+                  <select value={selectedParticipant} onChange={(e) => setSelectedParticipant(Number(e.target.value))} className="rounded-full border px-3 py-1 text-sm">
+                    {state.participants.map((p, idx) => (
+                      <option key={p.id} value={idx}>Slot {String(idx + 1).padStart(2, "0")} {p.name ? `— ${p.name}` : ""}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="text-sm text-gray-500">Puntos: <span className="font-bold text-black">{participantPoints(part)}</span></div>
+                  <div className="text-sm text-gray-500">Media: <span className="font-extrabold">{participantAvg(part)}</span></div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_240px] gap-4 items-start">
+                <div>
+                  <div className="mb-2 text-sm text-gray-600">Nombre del participante</div>
+                  <input value={part.name} onChange={(e) => {
+                    const val = e.target.value;
+                    setState((s) => {
+                      const parts = s.participants.slice();
+                      parts[selectedParticipant] = { ...parts[selectedParticipant], name: val };
+                      return { ...s, participants: parts };
+                    });
+                  }} className="w-full rounded-lg border border-gray-300 px-3 py-2" placeholder="Ej. María Pérez" />
+                </div>
+
+                <div>
+                  <div className="mb-2 text-sm text-gray-600">Formación</div>
+                  <FormationPicker value={part.formation} onChange={(v) => changeParticipantFormation(selectedParticipant, v)} />
+                </div>
+              </div>
             </div>
+
+            <Pitch rows={rowsForParticipant} />
           </div>
 
-          <div className="flex items-center gap-2">
-            <input className="rounded-full border px-3 py-2" value={selectedTeamObj.name} onChange={(e) => setState((s) => { const teams = s.teams.slice(); teams[selectedTeam] = { ...teams[selectedTeam], name: e.target.value }; return { ...s, teams }; })} placeholder="Nombre del participante" />
-            <div className="text-sm text-gray-500">Puntos: <span className="font-semibold">{teamPoints[selectedTeam]}</span></div>
-          </div>
-        </div>
-
-        <div className="grid md:grid-cols-[minmax(0,680px)_1fr] gap-6 items-start">
-          <div className="md:max-w-[680px]">
-            <Pitch rows={rowsForSelected} />
-          </div>
-
+          {/* Panel derecho con lista de jugadoras (pool) y acciones */}
           <div className="space-y-4">
             <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-semibold text-gray-800">Formación (este campo)</span>
+                <span className="text-sm font-semibold text-gray-800">Pool de jugadoras</span>
+                <span className="text-sm text-gray-500">{players.length} jugadoras</span>
               </div>
-              <FormationPicker value={selectedTeamObj.formation} onChange={(v) => changeFormationForTeam(selectedTeam, v)} />
-            </div>
-
-            <div className="rounded-2xl bg-white border border-gray-200 p-5 shadow-sm space-y-1">
-              <div className="text-sm text-gray-600">Puntos del participante</div>
-              <div className="text-4xl font-black text-black">{teamPoints[selectedTeam]}</div>
-              <div className="mt-2 text-sm text-gray-600">Media por jugadora (visualmente)</div>
-              <div className="text-2xl font-extrabold text-gray-900">{(function(){ const ids = Object.values(selectedTeamObj.lineup).flat().filter(Boolean) as number[]; const valid = ids.filter(id=>!state.notPlayed[id]); if(valid.length===0) return 0; const sum = valid.reduce((acc,id)=>acc+(state.points[id]||0)+(selectedTeamObj.captainId===id?(state.points[id]||0):0),0); return Math.round((sum/valid.length)*10)/10; })()}</div>
+              <div className="grid sm:grid-cols-2 gap-3 max-h-[420px] overflow-auto">
+                {bench.map((b) => (
+                  <div key={b.id} className="flex items-center justify-between rounded-xl border border-gray-200 p-2">
+                    <div className="flex items-center gap-2">
+                      <BadgePosMulti roles={b.p.roles} />
+                      <div className="text-sm font-medium text-gray-800">{b.p.name}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className={`text-sm font-semibold ${b.np ? "text-gray-400" : pointsColorClass(b.pts)}`}>{b.np ? "No jugó" : `${b.pts}`}</div>
+                      <button type="button" onClick={() => {
+                        // asigna la jugadora al primer hueco vacio del mismo rol en el participante
+                        const role = b.p.roles[0] || "DF";
+                        const part = state.participants[selectedParticipant];
+                        // find first null in role, otherwise replace first
+                        const idx = part.lineup[role].indexOf(null);
+                        const targetIndex = idx >= 0 ? idx : 0;
+                        setModal({ role, index: targetIndex, participantIndex: selectedParticipant });
+                        // abrir modal para confirmar selección
+                      }} className="rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 px-2 py-1 text-sm font-semibold">Editar</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-base font-bold">Disponibles</h3>
-                <span className="text-sm text-gray-500">{bench.length} {bench.length === 1 ? "jugadora" : "jugadoras"}</span>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-gray-800">Acciones</span>
               </div>
-              {bench.length === 0 ? (
-                <div className="text-sm text-gray-500">Todas las jugadoras están en la alineación.</div>
-              ) : (
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {bench.map((b) => (
-                    <div key={b.id} className="flex items-center justify-between rounded-xl border border-gray-200 p-2">
-                      <div className="flex items-center gap-2"><BadgePosMulti roles={b.p.roles} /><div className="text-sm font-medium text-gray-800">{b.p.name}</div></div>
-                      <div className={`text-sm font-semibold ${b.np ? "text-gray-400" : pointsColorClass(b.pts)}`}>{b.np ? "No jugó" : `${b.pts}`}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="flex flex-col gap-2">
+                <div className="text-sm text-gray-600">Cuando recibas el equipo del participante, selecciónalo y completa su alineación.</div>
+                <button type="button" onClick={() => {
+                  // limpiar participante actual
+                  askConfirm("Vaciar equipo", "Se vaciará la alineación del participante seleccionado.", () => {
+                    setConfirm({ open: false, title: "", body: "", onYes: null });
+                    setState((s) => {
+                      const parts = s.participants.slice();
+                      parts[selectedParticipant] = { ...parts[selectedParticipant], lineup: emptyLineupForFormation(parts[selectedParticipant].formation), captainId: null };
+                      return { ...s, participants: parts };
+                    });
+                  });
+                }} className="rounded-xl border border-gray-300 px-3 py-2 text-sm">Vaciar equipo seleccionado</button>
+                <div className="text-xs text-gray-500">Nota: las jugadoras permanecen en el pool global. Puedes reutilizarlas en varios participantes.</div>
+              </div>
             </div>
-
           </div>
         </div>
       </div>
     );
   }
 
-  function Stepper({ value, disabled, onChange, onInc, onDec, onKeyDown }: any) {
+  function Stepper({ value, disabled, onChange, onInc, onDec, onKeyDown }) {
     const colorCls = pointsColorClass(Number(value) || 0);
     return (
       <div className={`inline-flex items-stretch rounded-lg border overflow-hidden ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
@@ -611,7 +721,7 @@ export default function AppFantasy(): JSX.Element {
       return arr;
     }, [players, sortKey, sortDir, state.points]);
 
-    function toggleSort(key: string) {
+    function toggleSort(key) {
       setSortKey((k) => {
         if (k === key) {
           setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -622,7 +732,7 @@ export default function AppFantasy(): JSX.Element {
       });
     }
 
-    const sortBtn = (key: string, label: string) => {
+    const sortBtn = (key, label) => {
       const active = sortKey === key;
       const arrow = active ? (sortDir === "asc" ? "↑" : "↓") : "";
       return (
@@ -645,7 +755,7 @@ export default function AppFantasy(): JSX.Element {
             {sortBtn("name", "Nombre")}
             {sortBtn("pos", "Posición")}
             {sortBtn("points", "Puntos")}
-            <button type="button" onClick={() => { const nome = prompt('Nombre jugadora?'); const pos = prompt('Pos (PT/DF/MC/DL)?','DF') as Pos; if(nome && pos) addPlayer(nome,pos); }} className="rounded-xl bg-black text-white hover:bg-gray-900 px-3 py-2 text-xs font-semibold">Añadir jugadora</button>
+            <button type="button" onClick={() => setAddOpen(true)} className="rounded-xl bg-black text-white hover:bg-gray-900 px-3 py-2 text-xs font-semibold">Añadir jugadora</button>
             <button type="button" onClick={resetPoints} className="rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 px-3 py-2 text-sm font-semibold">Reiniciar puntos</button>
           </div>
         </div>
@@ -671,10 +781,10 @@ export default function AppFantasy(): JSX.Element {
                     <Stepper
                       value={state.points[p.id]}
                       disabled={state.notPlayed[p.id]}
-                      onChange={(e: any) => setState((s) => ({ ...s, points: { ...s.points, [p.id]: parseInt(e.target.value || "0", 10) } }))}
+                      onChange={(e) => setState((s) => ({ ...s, points: { ...s.points, [p.id]: parseInt(e.target.value || "0", 10) } }))}
                       onInc={() => changePoints(p.id, +1)}
                       onDec={() => changePoints(p.id, -1)}
-                      onKeyDown={(e: any) => { if (e.key === "ArrowUp") { e.preventDefault(); changePoints(p.id, +1); } if (e.key === "ArrowDown") { e.preventDefault(); changePoints(p.id, -1); } }}
+                      onKeyDown={(e) => { if (e.key === "ArrowUp") { e.preventDefault(); changePoints(p.id, +1); } if (e.key === "ArrowDown") { e.preventDefault(); changePoints(p.id, -1); } }}
                     />
                   </td>
                   <td className="p-3">
@@ -689,10 +799,17 @@ export default function AppFantasy(): JSX.Element {
                             setConfirm({ open: false, title: "", body: "", onYes: null });
                             setState((s) => {
                               const players = s.players.filter((x) => x.id !== p.id);
-                              const teams = s.teams.map((t) => ({ ...t, lineup: Object.fromEntries(Object.entries(t.lineup).map(([r, arr]) => [r, arr.map((x) => (x === p.id ? null : x))])) as Lineup }));
+                              const lineup = Object.fromEntries(Object.entries(s.lineup).map(([r, arr]) => [r, arr.map((x) => (x === p.id ? null : x))]));
+                              // remove from participants lineups too
+                              const participants = s.participants.map((pt) => {
+                                const newLp = Object.fromEntries(Object.entries(pt.lineup).map(([r, arr]) => [r, arr.map((x) => (x === p.id ? null : x))]));
+                                const captainId = pt.captainId === p.id ? null : pt.captainId;
+                                return { ...pt, lineup: newLp, captainId };
+                              });
+                              const captainId = s.captainId === p.id ? null : s.captainId;
                               const { [p.id]: _pp, ...points } = s.points;
                               const { [p.id]: _pn, ...notPlayed } = s.notPlayed;
-                              return { ...s, players, teams, points, notPlayed };
+                              return { ...s, players, lineup, captainId, points, notPlayed, participants };
                             });
                           },
                         })
@@ -714,30 +831,41 @@ export default function AppFantasy(): JSX.Element {
     );
   }
 
-  function ViewRanking() {
-    const rows = state.teams.map((t, idx) => ({ idx, name: t.name || `Jugador ${idx + 1}`, pts: teamPoints[idx] }));
-    rows.sort((a, b) => b.pts - a.pts);
+  function ViewClasificacion() {
+    // construir clasificación: nombre + puntos por participante
+    const table = state.participants.map((pt) => {
+      const pts = participantPoints(pt);
+      const avg = participantAvg(pt);
+      const filledCount = Object.values(pt.lineup).flat().filter(Boolean).length;
+      return { id: pt.id, name: pt.name || `Slot ${pt.id}`, pts, avg, filledCount };
+    }).sort((a, b) => b.pts - a.pts);
+
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold">🏆 Clasificación</h2>
-          <div className="text-sm text-gray-500">{rows.filter(r=>r.name && r.name.trim()).length} participantes</div>
+          <div className="text-sm text-gray-600">Ordenada por puntos.</div>
         </div>
-        <div className="overflow-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
+
+        <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm overflow-auto">
           <table className="min-w-full">
             <thead>
               <tr className="text-left text-xs uppercase text-gray-500">
-                <th className="p-3">#</th>
+                <th className="p-3">Pos</th>
                 <th className="p-3">Participante</th>
                 <th className="p-3">Puntos</th>
+                <th className="p-3">Media</th>
+                <th className="p-3">Jugadoras puestas</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={r.idx} className={`border-t ${i===0?"bg-amber-50":''}`}>
-                  <td className="p-3 font-bold">{i+1}</td>
-                  <td className="p-3 text-sm font-medium text-gray-800">{r.name}</td>
-                  <td className="p-3 font-extrabold text-lg">{r.pts}</td>
+              {table.map((row, i) => (
+                <tr key={row.id} className="border-t">
+                  <td className="p-3 text-sm font-bold">{i + 1}</td>
+                  <td className="p-3 text-sm font-medium">{row.name}</td>
+                  <td className="p-3 text-sm font-extrabold">{row.pts}</td>
+                  <td className="p-3 text-sm">{row.avg}</td>
+                  <td className="p-3 text-sm text-gray-600">{row.filledCount}/5</td>
                 </tr>
               ))}
             </tbody>
@@ -754,41 +882,54 @@ export default function AppFantasy(): JSX.Element {
         <header className="flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
           <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Fantasy – Amigos del Duero</h1>
           <nav className="flex items-center gap-2 flex-wrap">
-            <TabButton active={tab === "teams"} onClick={() => setTab("teams")}>⚽ Equipos</TabButton>
+            <TabButton active={tab === "equipos"} onClick={() => setTab("equipos")}>⚽ Equipos</TabButton>
             <TabButton active={tab === "totw"} onClick={() => setTab("totw")}>⭐ Equipo de la Semana</TabButton>
             <TabButton active={tab === "scores"} onClick={() => setTab("scores")}>📊 Editor de puntuaciones</TabButton>
-            <TabButton active={tab === "ranking"} onClick={() => setTab("ranking")}>🏆 Clasificación</TabButton>
+            <TabButton active={tab === "clasificacion"} onClick={() => setTab("clasificacion")}>🏆 Clasificación</TabButton>
           </nav>
         </header>
 
-        {tab === "teams" && <ViewTeams />}
+        {tab === "equipos" && <ViewEquipos />}
         {tab === "totw" && <ViewTOTW />}
         {tab === "scores" && <ViewScores />}
-        {tab === "ranking" && <ViewRanking />}
+        {tab === "clasificacion" && <ViewClasificacion />}
       </div>
 
-      {/* Modal selección de hueco para equipos */}
+      {/* Modal selección de hueco (ahora soporta participanteIndex) */}
       {modal && (
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => setModal(null)} />
           <div className="relative w-full md:max-w-xl bg-white rounded-t-3xl md:rounded-2xl shadow-xl p-4 md:p-6">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-bold">Selecciona {modal.role}</h3>
+              <h3 className="text-lg font-bold">Selecciona {modal.role} {modal.participantIndex !== null ? `(Slot ${modal.participantIndex + 1})` : ""}</h3>
               <button type="button" onClick={() => setModal(null)} className="rounded-full px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200">Cerrar</button>
             </div>
 
             {/* Cabecera con jugadora del hueco + botón C para capitana */}
             {(() => {
-              const id = state.teams[modal.teamIndex].lineup[modal.role][modal.index];
+              const pi = modal.participantIndex;
+              const id = (pi === null) ? state.lineup[modal.role][modal.index] : state.participants[pi].lineup[modal.role][modal.index];
               if (!id) return null;
               const p = idToPlayer[id];
-              const isCap = state.teams[modal.teamIndex].captainId === id;
+              const isCap = (pi === null) ? state.captainId === id : state.participants[pi].captainId === id;
               return (
                 <div className="mb-3 flex items-center justify-between rounded-xl border border-gray-200 bg-white p-3">
                   <div className="flex items-center gap-2"><BadgePosMulti roles={p.roles} /><div className="text-sm font-medium">{p.name}</div></div>
                   <button
                     type="button"
-                    onClick={() => setState((s) => { const teams = s.teams.slice(); const t = teams[modal.teamIndex]; teams[modal.teamIndex] = { ...t, captainId: isCap ? null : id }; return { ...s, teams }; })}
+                    onClick={() => {
+                      if (pi === null) {
+                        setState((s) => ({ ...s, captainId: isCap ? null : id }));
+                      } else {
+                        setState((s) => {
+                          const parts = s.participants.slice();
+                          const pt = { ...parts[pi] };
+                          pt.captainId = isCap ? null : id;
+                          parts[pi] = pt;
+                          return { ...s, participants: parts };
+                        });
+                      }
+                    }}
                     className={`${"w-8 h-8 rounded-full border text-xs font-bold"} ${isCap ? "bg-yellow-300 border-yellow-500" : "bg-white border-gray-300 hover:bg-yellow-50"}`}
                     title="Marcar como Capitana"
                   >
@@ -800,22 +941,61 @@ export default function AppFantasy(): JSX.Element {
 
             <div className="space-y-2 max-h-[60vh] overflow-auto pr-1">
               {(() => {
-                const { role } = modal;
-                const used = new Set(Object.values(state.teams[modal.teamIndex].lineup).flat().filter(Boolean));
-                const candidates = players.filter((p) => hasRole(p, role) && !used.has(p.id));
-                if (candidates.length === 0) return <div className="text-sm text-gray-500">No hay jugadoras disponibles para esta posición.</div>;
-                return candidates.map((p) => (
+                const role = modal.role;
+                const pi = modal.participantIndex;
+                // candidates = todas las jugadoras de esa posición
+                const allCandidates = players.filter((p) => hasRole(p, role));
+                let already = new Set();
+                if (pi === null) {
+                  already = new Set(Object.values(state.lineup).flat().filter(Boolean));
+                } else {
+                  already = new Set(Object.values(state.participants[pi].lineup).flat().filter(Boolean));
+                }
+                // permitimos la selección salvo que sea la misma que ya esté en el hueco actual (se sustituye), y evitamos duplicados dentro del mismo equipo
+                return allCandidates.map((p) => (
                   <div key={p.id} className="flex items-center justify-between rounded-xl border p-2">
                     <div className="flex items-center gap-2"><BadgePosMulti roles={p.roles} /><div className="text-sm font-medium">{p.name}</div></div>
-                    <button type="button" onClick={() => assignToSlot(p.id)} className="rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 px-3 py-1 text-sm font-semibold">Elegir</button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => assignToSlotForTarget(p.id)}
+                        className="rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 px-3 py-1 text-sm font-semibold"
+                      >
+                        Elegir
+                      </button>
+                    </div>
                   </div>
                 ));
               })()}
             </div>
 
             <div className="mt-4 flex items-center justify-between">
-              <button type="button" onClick={clearSlot} className="rounded-xl bg-gray-100 hover:bg-gray-200 px-3 py-2 text-sm">Vaciar posición</button>
-              <div className="text-xs text-gray-500">Selecciona cualquier jugadora disponible.</div>
+              <button type="button" onClick={clearSlotForTarget} className="rounded-xl bg-gray-100 hover:bg-gray-200 px-3 py-2 text-sm">Vaciar posición</button>
+              <div className="text-xs text-gray-500">Selecciona cualquier jugadora del pool.</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal añadir jugadora */}
+      {addOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setAddOpen(false)} />
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl p-5 space-y-3">
+            <h3 className="text-lg font-bold">Añadir jugadora</h3>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Nombre y apellidos</label>
+              <input className="w-full rounded-lg border border-gray-300 px-3 py-2" value={newPlayer.name} onChange={(e) => setNewPlayer((s) => ({ ...s, name: e.target.value }))} placeholder="Ej. Laura Pérez" />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Posición</label>
+              <select className="w-full rounded-lg border border-gray-300 px-3 py-2" value={newPlayer.pos} onChange={(e) => setNewPlayer((s) => ({ ...s, pos: e.target.value }))}>
+                {POS.map((p) => (<option key={p} value={p}>{p}</option>))}
+              </select>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setAddOpen(false)} className="rounded-lg px-3 py-2 bg-gray-100 hover:bg-gray-200">Cancelar</button>
+              <button type="button" onClick={addPlayer} className="rounded-lg px-3 py-2 bg-black text-white hover:bg-gray-900">Añadir</button>
             </div>
           </div>
         </div>
@@ -832,9 +1012,25 @@ export default function AppFantasy(): JSX.Element {
   );
 }
 
-// ===================== Tests rápidos (dev) =====================
+// ===================== Tests rápidos en consola (opcionales) =====================
 (function runDevTests(){
   try {
-    console.log('✅ TSX ready');
-  } catch(e) { console.warn('⚠️ Tests fallaron:', e); }
+    const f1 = formationToCounts("1-1-1-2");
+    const f2 = formationToCounts("0-2-2-1");
+    const f3 = formationToCounts("1-2-1-1");
+    const sum = (o) => o.PT + o.DF + o.MC + o.DL;
+    console.assert(sum(f1) === 5 && f1.PT === 1, "formation 1-1-1-2 -> 5 jugadoras con PT");
+    console.assert(sum(f2) === 5 && f2.PT === 0, "formation 0-2-2-1 -> 5 jugadoras sin PT");
+    console.assert(sum(f3) === 5 && f3.PT === 1, "formation 1-2-1-1 -> 5 jugadoras con PT");
+
+    ["PT","DF","MC","DL"].forEach((k)=>{ if(!(k in POS_COLORS)) throw new Error("Missing POS color: "+k); });
+
+    const pc = (v) => pointsColorClass(v);
+    console.assert(pc(-1) === "text-red-600" && pc(0) === "text-gray-500" && pc(3) === "text-orange-500" && pc(8) === "text-green-600" && pc(10) === "text-blue-600", "pointsColorClass ranges");
+
+    const paula = INITIAL_PLAYERS.find(p=>p.id===2);
+    console.assert(hasRole(paula, "DF") && hasRole(paula, "MC"), "multiposición Paula Díaz");
+
+    console.log("✅ Tests básicos OK (v10)");
+  } catch(e) { console.warn("⚠️ Tests fallaron:", e); }
 })();
