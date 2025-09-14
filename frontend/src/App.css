@@ -1,3 +1,5 @@
+/* Estilos adicionales para la aplicación de Fantasy */
+
 .App-logo {
     height: 40vmin;
     pointer-events: none;
@@ -31,4 +33,67 @@
     to {
         transform: rotate(360deg);
     }
+}
+
+/* Prevenir scroll horizontal en toda la aplicación */
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    overflow-x: hidden;
+    width: 100%;
+}
+
+/* Asegurar que los grids no causen overflow */
+.grid {
+    width: 100%;
+    min-width: 0;
+}
+
+/* Hacer que las tablas sean responsivas */
+.table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Asegurar que los elementos flexibles no causen overflow */
+.flex {
+    min-width: 0;
+}
+
+/* Mejorar responsive design para móviles */
+@media (max-width: 640px) {
+    .grid-cols-12 {
+        gap: 0.5rem;
+    }
+    
+    .p-4 {
+        padding: 0.75rem;
+    }
+    
+    .text-2xl {
+        font-size: 1.5rem;
+    }
+    
+    .text-xl {
+        font-size: 1.25rem;
+    }
+}
+
+/* Asegurar que los campos de formación no se desborden */
+.formation-field {
+    max-width: 100%;
+    overflow: hidden;
+}
+
+/* Estilo para botones que no deben causar scroll horizontal */
+.tab-container {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.tab-container::-webkit-scrollbar {
+    display: none;
 }

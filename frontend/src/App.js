@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import "./App.css";
 
 // ===================== Utilidades =====================
@@ -248,11 +248,11 @@ function PlayerCard({ player, points, notPlayed, isCaptain, mvp }) {
   );
 }
 
-// Campo con grid
+// Campo con grid - MEJORADO PARA RESPONSIVE
 function Pitch({ rows }) {
   const GRID_COLS = 12;
   return (
-    <div className="w-full rounded-3xl p-4 md:p-6 bg-gradient-to-b from-green-700 to-emerald-800 relative overflow-hidden shadow-inner">
+    <div className="w-full max-w-full rounded-3xl p-4 md:p-6 bg-gradient-to-b from-green-700 to-emerald-800 relative overflow-hidden shadow-inner">
       {/* Líneas del campo */}
       <div className="absolute inset-0 opacity-30" aria-hidden>
         <div className="absolute inset-1 rounded-[28px] border-2 border-white/30" />
@@ -261,7 +261,7 @@ function Pitch({ rows }) {
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/40" style={{ width: 160, height: 160 }} />
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 w-[2px] h-full bg-white/40" />
       </div>
-      <div className="relative z-10 flex flex-col gap-5 md:gap-7">
+      <div className="relative z-10 flex flex-col gap-3 md:gap-5">
         {rows.map((row, idx) => {
           const count = row.players.length || 1;
           const slotSpan = Math.max(2, Math.floor(GRID_COLS / count));
@@ -270,10 +270,10 @@ function Pitch({ rows }) {
           const lead = Math.floor(remaining / 2);
           const trail = GRID_COLS - used - lead;
           return (
-            <div key={idx} className="grid gap-3 grid-cols-12 items-center">
+            <div key={idx} className="grid gap-2 md:gap-3 grid-cols-12 items-center w-full">
               {lead > 0 && <div style={{ gridColumn: `span ${lead} / span ${lead}` }} />}
               {row.players.map((slot, i) => (
-                <div key={i} style={{ gridColumn: `span ${slotSpan} / span ${slotSpan}` }}>
+                <div key={i} style={{ gridColumn: `span ${slotSpan} / span ${slotSpan}` }} className="min-w-0">
                   <button type="button" onClick={slot.onClick} className={`w-full rounded-2xl p-1 md:p-2 transition ${slot.player ? "hover:scale-[1.02]" : "hover:bg-white/10"}`}>
                     {slot.player ? (
                       <PlayerCard player={slot.player} points={slot.points} notPlayed={slot.notPlayed} isCaptain={slot.isCaptain} mvp={slot.mvp} />
@@ -297,7 +297,7 @@ function TabButton({ active, onClick, children }) {
     <button
       type="button"
       onClick={onClick}
-      className={`px-4 py-2 rounded-full text-sm font-semibold transition border ${active ? "bg-black text-white border-black" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`}
+      className={`px-4 py-2 rounded-full text-sm font-semibold transition border whitespace-nowrap ${active ? "bg-black text-white border-black" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`}
     >
       {children}
     </button>
@@ -307,7 +307,7 @@ function TabButton({ active, onClick, children }) {
 function ConfirmDialog({ open, title, body, onConfirm, onCancel }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
       <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-5">
         <h4 className="text-lg font-bold mb-2">{title}</h4>
@@ -380,15 +380,16 @@ function AppFantasy() {
   }
   function participantAvg(part, jornadaData = currentJornadaData) {
     if (!part) return 0;
-    const ids = Object.values(part.lineup).flat().filter(Boolean).filter((id) => !jornadaData.notPlayed[id]);
-    if (ids.length === 0) return 0;
+    const fielded = Object.values(part.lineup).flat().filter(Boolean);
+    if (fielded.length === 0) return 0;
     let sum = 0;
-    for (const id of ids) {
+    for (const id of fielded) {
       const base = jornadaData.points[id] || 0;
       const bonus = id === part.captainId ? base : 0;
+      // INCLUIR jugadoras que no jugaron como 0 puntos en la media
       sum += base + bonus;
     }
-    return Math.round((sum / ids.length) * 10) / 10;
+    return Math.round((sum / fielded.length) * 10) / 10;
   }
 
   // Equipo de la semana (Top 5) + MVP de la jornada actual
@@ -483,20 +484,6 @@ function AppFantasy() {
 
   function askConfirm(title, body, onYes) { setConfirm({ open: true, title, body, onYes }); }
 
-  function resetPoints() {
-    askConfirm("Reiniciar puntos", "Pondrá todos los puntos a 0 y desmarcará 'No jugó' para todas las jugadoras de esta jornada.", () => {
-      setConfirm({ open: false, title: "", body: "", onYes: null });
-      setState((s) => {
-        const jornadas = s.jornadas.slice();
-        const jornadaData = { ...jornadas[s.currentJornada - 1] };
-        jornadaData.points = Object.fromEntries(s.players.map((p) => [p.id, 0]));
-        jornadaData.notPlayed = Object.fromEntries(s.players.map((p) => [p.id, false]));
-        jornadas[s.currentJornada - 1] = jornadaData;
-        return { ...s, jornadas };
-      });
-    });
-  }
-
   function addPlayer() {
     const name = newPlayer.name.trim();
     const pos = newPlayer.pos;
@@ -549,6 +536,35 @@ function AppFantasy() {
     setNewParticipantName("");
   }
 
+  // NUEVA FUNCIÓN: Eliminar participante
+  function deleteParticipant(participantIndex) {
+    askConfirm("Eliminar participante", "¿Estás seguro de que quieres eliminar este participante? Esta acción no se puede deshacer.", () => {
+      setState((s) => {
+        const jornadas = s.jornadas.slice();
+        const jornadaData = { ...jornadas[s.currentJornada - 1] };
+        const parts = jornadaData.participants.slice();
+        parts.splice(participantIndex, 1);
+        jornadaData.participants = parts;
+        jornadas[s.currentJornada - 1] = jornadaData;
+        
+        // Ajustar selectedParticipant si es necesario
+        const newSelectedParticipant = participantIndex === 0 ? 0 : Math.max(0, Math.min(selectedParticipant, parts.length - 1));
+        
+        return { ...s, jornadas };
+      });
+      
+      // Ajustar selectedParticipant después del estado
+      const newParticipantCount = state.jornadas[state.currentJornada - 1].participants.length - 1;
+      if (selectedParticipant >= newParticipantCount && newParticipantCount > 0) {
+        setSelectedParticipant(newParticipantCount - 1);
+      } else if (newParticipantCount === 0) {
+        setSelectedParticipant(0);
+      }
+      
+      setConfirm({ open: false, title: "", body: "", onYes: null });
+    });
+  }
+
   // ========= Derivados =========
   const currentParticipant = currentJornadaData.participants[selectedParticipant];
 
@@ -587,7 +603,7 @@ function AppFantasy() {
     }));
 
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 overflow-x-hidden">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold">⭐ Equipo de la Semana - Jornada {state.currentJornada}</h2>
           <div className="text-sm font-bold text-black">Total: {totw.total}</div>
@@ -599,28 +615,28 @@ function AppFantasy() {
           const p = idToPlayer[id];
           const pts = currentNotPlayed[id] ? 0 : (currentPoints[id] || 0);
           return (
-            <div className="relative rounded-3xl p-6 md:p-8 bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-400 text-white shadow">
-              <div className="absolute -top-3 -left-3 w-12 h-12 rounded-full bg-white shadow flex items-center justify-center">
-                <div className="w-9 h-9 rounded-full border-2 border-amber-400 bg-gradient-to-br from-yellow-300 to-amber-400 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" className="w-5 h-5 text-yellow-700" aria-hidden>
+            <div className="relative rounded-3xl p-6 md:p-8 bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-400 text-white shadow overflow-hidden">
+              <div className="absolute -top-2 -left-2 w-16 h-16 rounded-full bg-white shadow flex items-center justify-center">
+                <div className="w-12 h-12 rounded-full border-2 border-amber-400 bg-gradient-to-br from-yellow-300 to-amber-400 flex items-center justify-center">
+                  <svg viewBox="0 0 24 24" className="w-6 h-6 text-yellow-700" aria-hidden>
                     <path fill="currentColor" d="M12 17.3l-5.09 3 1.36-5.82L3 9.9l5.91-.51L12 3.5l3.09 5.89L21 9.9l-5.27 4.58 1.36 5.82L12 17.3z"/>
                   </svg>
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-6">
-                <div>
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6 pl-6">
+                <div className="text-center md:text-left">
                   <div className="text-xl font-extrabold">MVP de la Jornada</div>
                   <div className="mt-1 text-2xl md:text-3xl font-black drop-shadow-sm">{p.name}</div>
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-2 flex items-center justify-center md:justify-start gap-2">
                     <span className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-white/20 text-white text-xs font-semibold backdrop-blur">
                       <BadgePosMulti roles={p.roles} />
                       <span className={pointsColorClass(pts)}>{pts}</span> puntos
                     </span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-5xl md:text-7xl font-black leading-none drop-shadow-sm">{pts}</div>
-                  <div className="uppercase tracking-wide text-xs md:text-sm font-semibold opacity-90">PUNTOS</div>
+                <div className="text-center">
+                  <div className="text-4xl md:text-6xl font-black drop-shadow-lg">{pts}</div>
+                  <div className="text-sm font-semibold opacity-90">PUNTOS</div>
                 </div>
               </div>
             </div>
@@ -630,542 +646,674 @@ function AppFantasy() {
     );
   }
 
-  // ========= VISTA EQUIPOS =========
-  function ViewEquipos() {
-    const bench = players.map((p) => ({ id: p.id, p, pts: currentPoints[p.id] || 0, np: currentNotPlayed[p.id] }));
-    const part = currentParticipant;
-
-    // Header title: "Participante N — Nombre" (si nombre existe)
-    const headerTitle = part ? `${part.name || `Participante ${selectedParticipant + 1}`}` : "";
-
-    return (
-      <div className="space-y-6">
-        <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="text-sm font-semibold text-gray-800">Jornada</div>
-              <select
-                value={state.currentJornada}
-                onChange={(e) => {
-                  setState(s => ({ ...s, currentJornada: Number(e.target.value) }));
-                  setSelectedParticipant(0); // Reset participant selection
-                }}
-                className="rounded-full border px-3 py-1 text-sm"
-              >
-                {Array.from({ length: 26 }, (_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    {i + 1}
-                  </option>
-                ))}
-              </select>
-
-              <div className="text-sm font-semibold text-gray-800">Participante</div>
-              <select
-                value={selectedParticipant}
-                onChange={(e) => setSelectedParticipant(Number(e.target.value))}
-                className="rounded-full border px-3 py-1 text-sm"
-                disabled={currentJornadaData.participants.length === 0}
-              >
-                {currentJornadaData.participants.map((p, idx) => (
-                  <option key={p.id} value={idx}>
-                    {p.name || `${idx + 1}`}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                onClick={() => setAddParticipantOpen(true)}
-                className="rounded-xl bg-green-600 text-white hover:bg-green-700 px-3 py-1 text-sm font-semibold"
-              >
-                + Añadir participante
-              </button>
-            </div>
-
-            <div className="flex-1">
-              <div className="text-sm text-gray-500">{headerTitle}</div>
-            </div>
-
-            {part && (
-              <div className="flex items-center gap-4">
-                <div className="text-sm text-gray-500">Puntos:</div>
-                <div className="text-2xl font-extrabold text-black">{participantPoints(part)}</div>
-
-                <div className="text-sm text-gray-500">Media:</div>
-                <div className="text-xl font-bold text-gray-900">{participantAvg(part)}</div>
-              </div>
-            )}
-          </div>
-
-          {part && (
-            <div className="mt-4 grid md:grid-cols-[1fr_360px] gap-6">
-              {/* Campo grande a la izquierda */}
-              <div>
-                <Pitch rows={rowsForParticipant} />
-              </div>
-
-              {/* Panel derecho: formaciones y pool de jugadoras */}
-              <div className="space-y-4">
-                {/* Selector de formación en 3x3 */}
-                <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-base font-bold">Formaciones</h3>
-                  </div>
-                  <FormationPicker value={part.formation} onChange={(v) => changeParticipantFormation(selectedParticipant, v)} />
-                </div>
-
-                {/* Pool de jugadoras */}
-                <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-base font-bold">Pool de jugadoras</h3>
-                    <div className="text-sm text-gray-500">{players.length} jugadoras</div>
-                  </div>
-
-                  <div className="max-h-[360px] overflow-auto">
-                    <div className="grid gap-2">
-                      {bench.map((b) => (
-                        <button
-                          key={b.id}
-                          onClick={() => {
-                            // asigna la jugadora al primer hueco vacio del mismo rol en el participante (si no hay hueco, sustituye el primero)
-                            const role = b.p.roles[0] || "DF";
-                            const idx = part.lineup[role].indexOf(null);
-                            const targetIndex = idx >= 0 ? idx : 0;
-                            setModal({ role, index: targetIndex, participantIndex: selectedParticipant });
-                          }}
-                          className="w-full text-left rounded-lg border border-gray-200 px-3 py-2 flex items-center justify-between hover:bg-gray-50 transition"
-                        >
-                          <div className="flex items-center gap-3">
-                            <BadgePosMulti roles={b.p.roles} />
-                            <div>
-                              <div className="text-sm font-medium text-gray-800">{b.p.name}</div>
-                            </div>
-                          </div>
-                          <div className={`text-sm font-semibold ${b.np ? "text-gray-400" : pointsColorClass(b.pts)}`}>{b.np ? "No jugó" : `${b.pts}`}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {!part && currentJornadaData.participants.length === 0 && (
-            <div className="mt-4 text-center py-8">
-              <p className="text-gray-500 mb-4">No hay participantes en esta jornada.</p>
-              <button
-                type="button"
-                onClick={() => setAddParticipantOpen(true)}
-                className="rounded-xl bg-green-600 text-white hover:bg-green-700 px-4 py-2 text-sm font-semibold"
-              >
-                Añadir primer participante
-              </button>
-            </div>
-          )}
-        </div>
-      </div> 
-    );
-  }
-
-  function Stepper({ value, disabled, onChange, onInc, onDec, onKeyDown }) {
-    const colorCls = pointsColorClass(Number(value) || 0);
-    return (
-      <div className={`inline-flex items-stretch rounded-lg border overflow-hidden ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
-        <button type="button" onClick={onDec} className="px-2 text-sm bg-red-50 hover:bg-red-100 text-red-700 border-r border-red-200">−</button>
-        <input type="number" inputMode="numeric" className={`w-20 text-center outline-none px-2 font-semibold ${colorCls}`} value={value} onChange={onChange} onKeyDown={onKeyDown} />
-        <button type="button" onClick={onInc} className="px-2 text-sm bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-l border-emerald-200">＋</button>
-      </div>
-    );
-  }
-
   function ViewScores() {
-    const [sortKey, setSortKey] = useState("name"); // name | pos | points
-    const [sortDir, setSortDir] = useState("asc"); // asc | desc
+    const scoresScrollRef = useRef(null);
+    
+    const positionFiltered = players.filter((p) => hasRole(p, "DL") || hasRole(p, "MC") || hasRole(p, "DF") || hasRole(p, "PT"));
+    const sorted = positionFiltered.sort((a, b) => {
+      const aPos = POS_ORDER[primaryPos(a)] ?? 999;
+      const bPos = POS_ORDER[primaryPos(b)] ?? 999;
+      if (aPos !== bPos) return aPos - bPos;
+      return a.name.localeCompare(b.name);
+    });
 
-    const dirMul = sortDir === "asc" ? 1 : -1;
-    const sortedPlayers = useMemo(() => {
-      const arr = [...players];
-      arr.sort((a, b) => {
-        if (sortKey === "name") return dirMul * a.name.localeCompare(b.name, "es", { sensitivity: "base" });
-        if (sortKey === "pos") return dirMul * (POS_ORDER[primaryPos(a)] - POS_ORDER[primaryPos(b)]);
-        if (sortKey === "points") return dirMul * ((currentPoints[a.id] || 0) - (currentPoints[b.id] || 0));
-        return 0;
+    // Función para cambiar puntos sin hacer scroll
+    const changePointsWithoutScroll = (id, delta) => {
+      const currentScrollTop = scoresScrollRef.current?.scrollTop || 0;
+      
+      setState((s) => {
+        const jornadas = s.jornadas.slice();
+        const jornadaData = { ...jornadas[s.currentJornada - 1] };
+        jornadaData.points = adjustPoints(jornadaData.points, id, delta);
+        jornadas[s.currentJornada - 1] = jornadaData;
+        return { ...s, jornadas };
       });
-      return arr;
-    }, [players, sortKey, sortDir, currentPoints]);
-
-    function toggleSort(key) {
-      setSortKey((k) => {
-        if (k === key) {
-          setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-          return k;
+      
+      // Restaurar posición del scroll después del re-render
+      setTimeout(() => {
+        if (scoresScrollRef.current) {
+          scoresScrollRef.current.scrollTop = currentScrollTop;
         }
-        setSortDir("asc");
-        return key;
+      }, 0);
+    };
+
+    function deletePlayer(playerId) {
+      askConfirm("Eliminar jugadora", "¿Estás seguro de que quieres eliminar esta jugadora? Se eliminará de todos los equipos y jornadas.", () => {
+        setState((s) => {
+          // Eliminar jugadora de la lista de jugadoras
+          const updatedPlayers = s.players.filter(p => p.id !== playerId);
+          
+          // Eliminar de todas las jornadas (puntos, notPlayed y lineups)
+          const updatedJornadas = s.jornadas.map(jornada => ({
+            ...jornada,
+            points: Object.fromEntries(Object.entries(jornada.points).filter(([id]) => parseInt(id) !== playerId)),
+            notPlayed: Object.fromEntries(Object.entries(jornada.notPlayed).filter(([id]) => parseInt(id) !== playerId)),
+            participants: jornada.participants.map(participant => ({
+              ...participant,
+              lineup: Object.fromEntries(
+                Object.entries(participant.lineup).map(([position, lineup]) => [
+                  position, 
+                  lineup.map(id => id === playerId ? null : id)
+                ])
+              ),
+              captainId: participant.captainId === playerId ? null : participant.captainId
+            }))
+          }));
+          
+          return {
+            ...s,
+            players: updatedPlayers,
+            jornadas: updatedJornadas
+          };
+        });
+        setConfirm({ open: false, title: "", body: "", onYes: null });
       });
     }
 
-    const sortBtn = (key, label) => {
-      const active = sortKey === key;
-      const arrow = active ? (sortDir === "asc" ? "↑" : "↓") : "";
-      return (
-        <button
-          type="button"
-          onClick={() => toggleSort(key)}
-          className={`px-3 py-1.5 rounded-full border text-xs font-semibold transition ${active ? "bg-black text-white border-black" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`}
-          title={`Ordenar por ${label}`}
-        >
-          {label} {arrow}
-        </button>
-      );
-    };
-
     return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold">📊 Editor de puntuaciones - Jornada {state.currentJornada}</h2>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            {sortBtn("name", "Nombre")}
-            {sortBtn("pos", "Posición")}
-            {sortBtn("points", "Puntos")}
-            <button type="button" onClick={() => setAddOpen(true)} className="rounded-xl bg-black text-white hover:bg-gray-900 px-3 py-2 text-xs font-semibold">Añadir jugadora</button>
-            <button type="button" onClick={resetPoints} className="rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 px-3 py-2 text-sm font-semibold">Reiniciar puntos</button>
-          </div>
+      <div className="space-y-4 overflow-x-hidden">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-xl font-bold">📊 Editor de Puntuaciones - Jornada {state.currentJornada}</h2>
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition"
+          >
+            + Añadir jugadora
+          </button>
         </div>
-
-        <div className="overflow-auto rounded-xl border border-gray-200">
-          <table className="min-w-full bg-white">
-            <thead>
-              <tr className="text-left text-xs uppercase text-gray-500">
-                <th className="p-3">Pos</th>
-                <th className="p-3">Nombre</th>
-                <th className="p-3">No jugó</th>
-                <th className="p-3">Puntos</th>
-                <th className="p-3">Eliminar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedPlayers.map((p) => (
-                <tr key={p.id} className="border-t">
-                  <td className="p-3"><BadgePosMulti roles={p.roles} /></td>
-                  <td className="p-3 text-sm font-medium text-gray-800">{p.name}</td>
-                  <td className="p-3">
-                    <input 
-                      type="checkbox" 
-                      checked={currentNotPlayed[p.id]} 
-                      onChange={(e) => setState((s) => {
-                        const jornadas = s.jornadas.slice();
-                        const jornadaData = { ...jornadas[s.currentJornada - 1] };
-                        jornadaData.notPlayed = { ...jornadaData.notPlayed, [p.id]: e.target.checked };
-                        jornadas[s.currentJornada - 1] = jornadaData;
-                        return { ...s, jornadas };
-                      })} 
-                    />
-                  </td>
-                  <td className="p-3">
-                    <Stepper
-                      value={currentPoints[p.id]}
-                      disabled={currentNotPlayed[p.id]}
-                      onChange={(e) => setState((s) => {
-                        const jornadas = s.jornadas.slice();
-                        const jornadaData = { ...jornadas[s.currentJornada - 1] };
-                        jornadaData.points = { ...jornadaData.points, [p.id]: parseInt(e.target.value || "0", 10) };
-                        jornadas[s.currentJornada - 1] = jornadaData;
-                        return { ...s, jornadas };
-                      })}
-                      onInc={() => changePoints(p.id, +1)}
-                      onDec={() => changePoints(p.id, -1)}
-                      onKeyDown={(e) => { if (e.key === "ArrowUp") { e.preventDefault(); changePoints(p.id, +1); } if (e.key === "ArrowDown") { e.preventDefault(); changePoints(p.id, -1); } }}
-                    />
-                  </td>
-                  <td className="p-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setConfirm({
-                          open: true,
-                          title: "Eliminar jugadora",
-                          body: `¿Eliminar a ${p.name}?`,
-                          onYes: () => {
-                            setConfirm({ open: false, title: "", body: "", onYes: null });
-                            setState((s) => {
-                              const players = s.players.filter((x) => x.id !== p.id);
-                              // remove from all jornadas
-                              const jornadas = s.jornadas.map((j) => {
-                                const participants = j.participants.map((pt) => {
-                                  const newLp = Object.fromEntries(Object.entries(pt.lineup).map(([r, arr]) => [r, arr.map((x) => (x === p.id ? null : x))]));
-                                  const captainId = pt.captainId === p.id ? null : pt.captainId;
-                                  return { ...pt, lineup: newLp, captainId };
-                                });
-                                const { [p.id]: _pp, ...points } = j.points;
-                                const { [p.id]: _pn, ...notPlayed } = j.notPlayed;
-                                return { ...j, participants, points, notPlayed };
-                              });
-                              return { ...s, players, jornadas };
-                            });
-                          },
-                        })
-                      }
-                      title="Eliminar"
-                      className="group w-9 h-9 rounded-md border border-gray-300 hover:bg-red-50 transition-transform hover:scale-110 flex items-center justify-center"
-                    >
-                      <svg viewBox="0 0 24 24" className="w-5 h-5 text-gray-700 group-hover:text-red-600 transition-colors" aria-hidden>
-                        <path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 7h2v8h-2v-8zm4 0h2v8h-2v-8zM7 10h2v8H7v-8z"/>
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  }
-
-  function ViewClasificacion() {
-    const [classType, setClassType] = useState("jornada"); // "jornada" | "general"
-    
-    // Clasificación de la jornada actual
-    const jornadaTable = currentJornadaData.participants.map((pt) => {
-      const pts = participantPoints(pt, currentJornadaData);
-      const avg = participantAvg(pt, currentJornadaData);
-      return { id: pt.id, name: pt.name || `Participante ${pt.id}`, pts, avg };
-    }).sort((a, b) => b.pts - a.pts);
-
-    // Clasificación general (suma de todas las jornadas)
-    const generalTable = useMemo(() => {
-      // Recopilar todos los participantes únicos por nombre
-      const allParticipants = new Map();
-      
-      state.jornadas.forEach((jornada, jornadaIdx) => {
-        jornada.participants.forEach((pt) => {
-          const name = pt.name || `Participante ${pt.id}`;
-          if (!allParticipants.has(name)) {
-            allParticipants.set(name, { name, totalPts: 0, jornadasPlayed: 0 });
-          }
-          const participant = allParticipants.get(name);
-          participant.totalPts += participantPoints(pt, jornada);
-          participant.jornadasPlayed += 1;
-        });
-      });
-
-      return Array.from(allParticipants.values())
-        .map(p => ({
-          ...p,
-          avgPerJornada: p.jornadasPlayed > 0 ? Math.round((p.totalPts / p.jornadasPlayed) * 10) / 10 : 0
-        }))
-        .sort((a, b) => b.totalPts - a.totalPts);
-    }, [state.jornadas]);
-
-    const currentTable = classType === "jornada" ? jornadaTable : generalTable;
-
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold">🏆 Clasificación</h2>
-          <div className="flex items-center gap-2">
-            <TabButton active={classType === "jornada"} onClick={() => setClassType("jornada")}>
-              Jornada {state.currentJornada}
-            </TabButton>
-            <TabButton active={classType === "general"} onClick={() => setClassType("general")}>
-              General
-            </TabButton>
-          </div>
-        </div>
-
-        <div className="rounded-2xl bg-white border border-gray-200 p-4 shadow-sm overflow-auto">
-          <table className="min-w-full">
-            <thead>
-              <tr className="text-left text-xs uppercase text-gray-500">
-                <th className="p-3">Pos</th>
-                <th className="p-3">Participante</th>
-                <th className="p-3">{classType === "jornada" ? "Puntos" : "Puntos totales"}</th>
-                <th className="p-3">{classType === "jornada" ? "Media" : "Media por jornada"}</th>
-                {classType === "general" && <th className="p-3">Jornadas jugadas</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {currentTable.map((row, i) => {
-                const isTop3 = i < 3;
-                const bg =
-                  i === 0 ? "bg-amber-200/70" :
-                  i === 1 ? "bg-slate-200/60" :
-                  i === 2 ? "bg-orange-200/60" : "bg-white";
-                const badge =
-                  i === 0 ? "🏅" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div ref={scoresScrollRef} className="max-h-[60vh] overflow-y-auto">
+            <div className="divide-y divide-gray-100">
+              {sorted.map((player) => {
+                const points = currentPoints[player.id] || 0;
+                const notPlayed = currentNotPlayed[player.id];
                 return (
-                  <tr key={row.name} className={`border-t ${bg}`}>
-                    <td className="p-3 text-sm font-bold">{i + 1} {badge && <span className="ml-2">{badge}</span>}</td>
-                    <td className="p-3 text-sm font-medium">{row.name}</td>
-                    <td className="p-3 text-sm font-extrabold">{classType === "jornada" ? row.pts : row.totalPts}</td>
-                    <td className="p-3 text-sm">{classType === "jornada" ? row.avg : row.avgPerJornada}</td>
-                    {classType === "general" && <td className="p-3 text-sm text-gray-600">{row.jornadasPlayed}</td>}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  }
-
-  // ===================== Render =====================
-  return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      <div className="max-w-6xl mx-auto p-4 md:p-6 space-y-6">
-        <header className="flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">Fantasy – Amigos del Duero</h1>
-          <nav className="flex items-center gap-2 flex-wrap">
-            <TabButton active={tab === "equipos"} onClick={() => setTab("equipos")}>⚽ Equipos</TabButton>
-            <TabButton active={tab === "totw"} onClick={() => setTab("totw")}>⭐ Equipo de la Semana</TabButton>
-            <TabButton active={tab === "scores"} onClick={() => setTab("scores")}>📊 Editor de puntuaciones</TabButton>
-            <TabButton active={tab === "clasificacion"} onClick={() => setTab("clasificacion")}>🏆 Clasificación</TabButton>
-          </nav>
-        </header>
-
-        {tab === "equipos" && <ViewEquipos />}
-        {tab === "totw" && <ViewTOTW />}
-        {tab === "scores" && <ViewScores />}
-        {tab === "clasificacion" && <ViewClasificacion />}
-      </div>
-
-      {/* Modal selección de hueco */}
-      {modal && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setModal(null)} />
-          <div className="relative w-full md:max-w-xl bg-white rounded-t-3xl md:rounded-2xl shadow-xl p-4 md:p-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-bold">Selecciona {modal.role}</h3>
-              <button type="button" onClick={() => setModal(null)} className="rounded-full px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200">Cerrar</button>
-            </div>
-
-            {/* Cabecera con jugadora del hueco + botón C para capitana */}
-            {(() => {
-              const pi = modal.participantIndex;
-              const id = (pi === null) ? null : currentJornadaData.participants[pi].lineup[modal.role][modal.index];
-              if (!id) return null;
-              const p = idToPlayer[id];
-              const isCap = currentJornadaData.participants[pi].captainId === id;
-              return (
-                <div className="mb-3 flex items-center justify-between rounded-xl border border-gray-200 bg-white p-3">
-                  <div className="flex items-center gap-2"><BadgePosMulti roles={p.roles} /><div className="text-sm font-medium">{p.name}</div></div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setState((s) => {
-                        const jornadas = s.jornadas.slice();
-                        const jornadaData = { ...jornadas[s.currentJornada - 1] };
-                        const parts = jornadaData.participants.slice();
-                        const pt = { ...parts[pi] };
-                        pt.captainId = isCap ? null : id;
-                        parts[pi] = pt;
-                        jornadaData.participants = parts;
-                        jornadas[s.currentJornada - 1] = jornadaData;
-                        return { ...s, jornadas };
-                      });
-                    }}
-                    className={`w-8 h-8 rounded-full border text-xs font-bold ${isCap ? "bg-yellow-300 border-yellow-500" : "bg-white border-gray-300 hover:bg-yellow-50"}`}
-                    title="Marcar como Capitana"
-                  >
-                    C
-                  </button>
-                </div>
-              );
-            })()}
-
-            <div className="space-y-2 max-h-[60vh] overflow-auto pr-1">
-              {(() => {
-                const role = modal.role;
-                // candidates = todas las jugadoras de esa posición
-                const allCandidates = players.filter((p) => hasRole(p, role));
-                return allCandidates.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between rounded-xl border p-2">
-                    <div className="flex items-center gap-2"><BadgePosMulti roles={p.roles} /><div className="text-sm font-medium">{p.name}</div></div>
-                    <div className="flex items-center gap-2">
+                  <div key={player.id} className="p-4 flex items-center justify-between gap-4 min-w-0">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <BadgePosMulti roles={player.roles} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-gray-900 truncate">{player.name}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => changePointsWithoutScroll(player.id, -1)}
+                          className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-600 font-bold text-sm flex items-center justify-center transition"
+                        >
+                          −
+                        </button>
+                        <div className={`w-12 text-center font-bold ${notPlayed ? "text-gray-500" : pointsColorClass(points)}`}>
+                          {notPlayed ? "−" : points}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => changePointsWithoutScroll(player.id, 1)}
+                          className="w-8 h-8 rounded-full bg-green-100 hover:bg-green-200 text-green-600 font-bold text-sm flex items-center justify-center transition"
+                        >
+                          +
+                        </button>
+                      </div>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={notPlayed}
+                          onChange={(e) => {
+                            const currentScrollTop = scoresScrollRef.current?.scrollTop || 0;
+                            setState((s) => {
+                              const jornadas = s.jornadas.slice();
+                              const jornadaData = { ...jornadas[s.currentJornada - 1] };
+                              jornadaData.notPlayed = { ...jornadaData.notPlayed, [player.id]: e.target.checked };
+                              jornadas[s.currentJornada - 1] = jornadaData;
+                              return { ...s, jornadas };
+                            });
+                            // Restaurar scroll
+                            setTimeout(() => {
+                              if (scoresScrollRef.current) {
+                                scoresScrollRef.current.scrollTop = currentScrollTop;
+                              }
+                            }, 0);
+                          }}
+                          className="rounded border-gray-300"
+                        />
+                        <span className="text-gray-600 whitespace-nowrap">No jugó</span>
+                      </label>
                       <button
                         type="button"
-                        onClick={() => assignToSlotForTarget(p.id)}
-                        className="rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 px-3 py-1 text-sm font-semibold"
+                        onClick={() => deletePlayer(player.id)}
+                        className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-600 flex items-center justify-center transition ml-2"
+                        title="Eliminar jugadora"
                       >
-                        Elegir
+                        🗑️
                       </button>
                     </div>
                   </div>
-                ));
-              })()}
-            </div>
-
-            <div className="mt-4 flex items-center justify-between">
-              <button type="button" onClick={clearSlotForTarget} className="rounded-xl bg-gray-100 hover:bg-gray-200 px-3 py-2 text-sm">Vaciar posición</button>
-              <div className="text-xs text-gray-500">Selecciona cualquier jugadora del pool.</div>
+                );
+              })}
             </div>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {/* Modal añadir jugadora */}
-      {addOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setAddOpen(false)} />
-          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl p-5 space-y-3">
-            <h3 className="text-lg font-bold">Añadir jugadora</h3>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Nombre y apellidos</label>
-              <input className="w-full rounded-lg border border-gray-300 px-3 py-2" value={newPlayer.name} onChange={(e) => setNewPlayer((s) => ({ ...s, name: e.target.value }))} placeholder="Ej. Laura Pérez" />
+  function ViewClassification() {
+    const [classificationMode, setClassificationMode] = useState("general"); // "general" | "jornada"
+    const [classificationJornada, setClassificationJornada] = useState(state.currentJornada);
+    const [sortBy, setSortBy] = useState("points"); // "points" | "avg" | "jornadas"
+    const [sortDirection, setSortDirection] = useState("desc"); // "asc" | "desc"
+
+    // Datos para clasificación general
+    const allParticipants = [];
+    state.jornadas.forEach((jornadaData, jornadaIdx) => {
+      jornadaData.participants.forEach((part) => {
+        let existing = allParticipants.find((ap) => ap.name === part.name);
+        if (!existing) {
+          existing = { name: part.name, jornadas: [], totalPoints: 0, totalAvg: 0, count: 0 };
+          allParticipants.push(existing);
+        }
+        const pts = participantPoints(part, jornadaData);
+        const avg = participantAvg(part, jornadaData);
+        existing.jornadas[jornadaIdx] = { points: pts, avg };
+        existing.totalPoints += pts;
+        existing.totalAvg += avg;
+        // CONTAR TODAS las jornadas jugadas, incluso con 0 o puntos negativos
+        existing.count++;
+      });
+    });
+
+    allParticipants.forEach((ap) => {
+      // CAMBIAR: Media por jornada = puntos totales / jornadas jugadas
+      ap.avgOfAvgs = ap.count > 0 ? Math.round((ap.totalPoints / ap.count) * 10) / 10 : 0;
+    });
+
+    // Datos para clasificación por jornada específica
+    const jornadaParticipants = state.jornadas[classificationJornada - 1].participants.map((part) => ({
+      name: part.name,
+      points: participantPoints(part, state.jornadas[classificationJornada - 1]),
+      avg: participantAvg(part, state.jornadas[classificationJornada - 1])
+    }));
+
+    // Función para cambiar ordenación
+    const handleSort = (newSortBy) => {
+      if (sortBy === newSortBy) {
+        setSortDirection(sortDirection === "desc" ? "asc" : "desc");
+      } else {
+        setSortBy(newSortBy);
+        setSortDirection("desc");
+      }
+    };
+
+    // Ordenar según el criterio seleccionado
+    const sortData = (data, mode) => {
+      return [...data].sort((a, b) => {
+        let valueA, valueB;
+        
+        if (mode === "general") {
+          if (sortBy === "points") {
+            valueA = a.totalPoints;
+            valueB = b.totalPoints;
+          } else if (sortBy === "avg") {
+            valueA = a.avgOfAvgs;
+            valueB = b.avgOfAvgs;
+          } else if (sortBy === "jornadas") {
+            valueA = a.count;
+            valueB = b.count;
+          }
+        } else {
+          if (sortBy === "points") {
+            valueA = a.points;
+            valueB = b.points;
+          } else if (sortBy === "avg") {
+            valueA = a.avg;
+            valueB = b.avg;
+          }
+        }
+        
+        if (sortDirection === "desc") {
+          return valueB - valueA;
+        } else {
+          return valueA - valueB;
+        }
+      });
+    };
+
+    const displayData = classificationMode === "general" 
+      ? sortData(allParticipants, "general")
+      : sortData(jornadaParticipants, "jornada");
+
+    // Función para obtener el ícono de ordenación
+    const getSortIcon = (column) => {
+      if (sortBy !== column) return "↕️";
+      return sortDirection === "desc" ? "↓" : "↑";
+    };
+
+    // Función para obtener colores de posición
+    const getPositionStyle = (index) => {
+      if (index === 0) return "bg-gradient-to-r from-yellow-100 to-yellow-200 border-l-4 border-yellow-500";
+      if (index === 1) return "bg-gradient-to-r from-gray-100 to-gray-200 border-l-4 border-gray-500";
+      if (index === 2) return "bg-gradient-to-r from-orange-100 to-orange-200 border-l-4 border-orange-500";
+      if (index < 5) return "bg-gradient-to-r from-green-50 to-green-100";
+      return "bg-white hover:bg-gray-50";
+    };
+
+    return (
+      <div className="space-y-4 overflow-x-hidden">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <h2 className="text-xl font-bold">🏆 Clasificación</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Selector de modo como botones */}
+            <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => setClassificationMode("general")}
+                className={`px-3 py-2 rounded-md text-sm font-semibold transition ${
+                  classificationMode === "general" 
+                    ? "bg-black text-white" 
+                    : "text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                General
+              </button>
+              <button
+                type="button"
+                onClick={() => setClassificationMode("jornada")}
+                className={`px-3 py-2 rounded-md text-sm font-semibold transition ${
+                  classificationMode === "jornada" 
+                    ? "bg-black text-white" 
+                    : "text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                Por Jornada
+              </button>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Posición</label>
-              <select className="w-full rounded-lg border border-gray-300 px-3 py-2" value={newPlayer.pos} onChange={(e) => setNewPlayer((s) => ({ ...s, pos: e.target.value }))}>
-                {POS.map((p) => (<option key={p} value={p}>{p}</option>))}
+            
+            {/* Selector de jornada (solo si está en modo jornada) */}
+            {classificationMode === "jornada" && (
+              <select
+                value={classificationJornada}
+                onChange={(e) => setClassificationJornada(parseInt(e.target.value, 10))}
+                className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm"
+              >
+                {Array.from({ length: 26 }, (_, i) => (
+                  <option key={i + 1} value={i + 1}>
+                    Jornada {i + 1}
+                  </option>
+                ))}
               </select>
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setAddOpen(false)} className="rounded-lg px-3 py-2 bg-gray-100 hover:bg-gray-200">Cancelar</button>
-              <button type="button" onClick={addPlayer} className="rounded-lg px-3 py-2 bg-black text-white hover:bg-gray-900">Añadir</button>
-            </div>
+            )}
           </div>
         </div>
-      )}
 
-      {/* Modal añadir participante */}
-      {addParticipantOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setAddParticipantOpen(false)} />
-          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl p-5 space-y-3">
-            <h3 className="text-lg font-bold">Añadir participante</h3>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Nombre del participante</label>
-              <input 
-                className="w-full rounded-lg border border-gray-300 px-3 py-2" 
-                value={newParticipantName} 
-                onChange={(e) => setNewParticipantName(e.target.value)} 
-                placeholder="Ej. Juan García" 
-              />
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setAddParticipantOpen(false)} className="rounded-lg px-3 py-2 bg-gray-100 hover:bg-gray-200">Cancelar</button>
-              <button type="button" onClick={addParticipant} className="rounded-lg px-3 py-2 bg-green-600 text-white hover:bg-green-700">Añadir</button>
-            </div>
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left p-3 font-semibold text-gray-700">#</th>
+                  <th className="text-left p-3 font-semibold text-gray-700">Participante</th>
+                  {classificationMode === "general" ? (
+                    <>
+                      <th 
+                        className="text-center p-3 font-semibold text-gray-700 cursor-pointer hover:bg-blue-100 transition"
+                        onClick={() => handleSort("points")}
+                      >
+                        Puntos Totales {getSortIcon("points")}
+                      </th>
+                      <th 
+                        className="text-center p-3 font-semibold text-gray-700 cursor-pointer hover:bg-blue-100 transition"
+                        onClick={() => handleSort("avg")}
+                      >
+                        Media por Jornada {getSortIcon("avg")}
+                      </th>
+                      <th 
+                        className="text-center p-3 font-semibold text-gray-700 cursor-pointer hover:bg-blue-100 transition"
+                        onClick={() => handleSort("jornadas")}
+                      >
+                        Jornadas Jugadas {getSortIcon("jornadas")}
+                      </th>
+                    </>
+                  ) : (
+                    <>
+                      <th 
+                        className="text-center p-3 font-semibold text-gray-700 cursor-pointer hover:bg-blue-100 transition"
+                        onClick={() => handleSort("points")}
+                      >
+                        Puntos {getSortIcon("points")}
+                      </th>
+                      <th 
+                        className="text-center p-3 font-semibold text-gray-700 cursor-pointer hover:bg-blue-100 transition"
+                        onClick={() => handleSort("avg")}
+                      >
+                        Media {getSortIcon("avg")}
+                      </th>
+                    </>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {displayData.map((participant, idx) => (
+                  <tr key={participant.name} className={`${getPositionStyle(idx)} transition-colors`}>
+                    <td className="p-3 font-bold text-lg">
+                      {idx === 0 && <span className="text-2xl">🥇</span>}
+                      {idx === 1 && <span className="text-2xl">🥈</span>}
+                      {idx === 2 && <span className="text-2xl">🥉</span>}
+                      {idx > 2 && <span className="text-gray-600">{idx + 1}.</span>}
+                    </td>
+                    <td className="p-3 font-semibold text-gray-900">{participant.name}</td>
+                    {classificationMode === "general" ? (
+                      <>
+                        <td className="p-3 text-center">
+                          <span className="font-bold text-lg text-black">{participant.totalPoints}</span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="font-semibold text-black">{participant.avgOfAvgs}</span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="font-semibold text-black">{participant.count}</span>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="p-3 text-center">
+                          <span className="font-bold text-lg text-black">{participant.points}</span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className="font-semibold text-black">{participant.avg}</span>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
+  function ViewEquipos() {
+    const parts = currentJornadaData.participants;
+    const part = currentParticipant;
+    const hasParticipants = parts.length > 0;
+
+    return (
+      <div className="space-y-4 overflow-x-hidden">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <h2 className="text-xl font-bold">⚽ Equipos - Jornada {state.currentJornada}</h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={state.currentJornada}
+              onChange={(e) => setState((s) => ({ ...s, currentJornada: parseInt(e.target.value, 10) }))}
+              className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm"
+            >
+              {Array.from({ length: 26 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  Jornada {i + 1}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setAddParticipantOpen(true)}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition"
+            >
+              + Añadir participante
+            </button>
+          </div>
+        </div>
+
+        {hasParticipants && (
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-gray-50 rounded-xl p-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              {parts.map((pt, i) => (
+                <button
+                  key={pt.id}
+                  type="button"
+                  onClick={() => setSelectedParticipant(i)}
+                  className={`px-4 py-2 rounded-full text-sm font-semibold transition border ${i === selectedParticipant ? "bg-black text-white border-black" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`}
+                >
+                  {pt.name}
+                </button>
+              ))}
+            </div>
+            {part && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-black">
+                  {participantPoints(part)} pts (Media: {participantAvg(part)})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => deleteParticipant(selectedParticipant)}
+                  className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-600 rounded-lg text-sm font-semibold transition"
+                  title="Eliminar participante"
+                >
+                  🗑️
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {hasParticipants && part ? (
+          <>
+            <div className="bg-gray-50 rounded-xl p-4 space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-bold text-lg">{part.name}</h3>
+                  <p className="text-sm text-gray-600">Formación: {part.formation}</p>
+                </div>
+                <div className="w-full sm:w-auto">
+                  <FormationPicker
+                    value={part.formation}
+                    onChange={(newF) => changeParticipantFormation(selectedParticipant, newF)}
+                  />
+                </div>
+              </div>
+            </div>
+            <Pitch rows={rowsForParticipant} />
+          </>
+        ) : (
+          <div className="text-center py-12 bg-gray-50 rounded-xl">
+            <div className="text-gray-500 mb-4">
+              <div className="text-4xl mb-2">⚽</div>
+              <p className="text-lg">No hay participantes en esta jornada</p>
+              <p className="text-sm">Añade un participante para comenzar</p>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Modal para seleccionar jugador
+  const modalView = modal && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={() => setModal(null)} />
+      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl max-h-[80vh] overflow-hidden">
+        <div className="p-4 border-b border-gray-200">
+          <h3 className="text-lg font-bold">Seleccionar Jugadora</h3>
+          <p className="text-sm text-gray-600">Posición: {modal.role}</p>
+        </div>
+        <div className="overflow-y-auto max-h-[60vh]">
+          <div className="p-2">
+            {players
+              .filter((p) => hasRole(p, modal.role))
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((player) => {
+                const points = currentPoints[player.id] || 0;
+                const notPlayed = currentNotPlayed[player.id];
+                return (
+                  <button
+                    key={player.id}
+                    type="button"
+                    onClick={() => assignToSlotForTarget(player.id)}
+                    className="w-full p-3 text-left rounded-lg hover:bg-gray-50 transition border-b border-gray-100 last:border-b-0"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <BadgePosMulti roles={player.roles} />
+                        <div>
+                          <div className="font-semibold">{player.name}</div>
+                          <div className="text-xs text-gray-500">{player.roles.join(", ")}</div>
+                        </div>
+                      </div>
+                      <div className={`text-sm font-semibold ${notPlayed ? "text-gray-500" : pointsColorClass(points)}`}>
+                        {notPlayed ? "No jugó" : `${points} pts`}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            {currentParticipant?.lineup[modal.role][modal.index] && (
+              <button
+                type="button"
+                onClick={clearSlotForTarget}
+                className="w-full p-3 text-center rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-semibold transition mt-2"
+              >
+                Quitar Jugadora
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Modal para añadir jugador
+  const addPlayerModal = addOpen && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={() => setAddOpen(false)} />
+      <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-5">
+        <h3 className="text-lg font-bold mb-4">Añadir Nueva Jugadora</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-semibold mb-1">Nombre completo</label>
+            <input
+              type="text"
+              value={newPlayer.name}
+              onChange={(e) => setNewPlayer((s) => ({ ...s, name: e.target.value }))}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-black"
+              placeholder="Ana García"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-1">Posición principal</label>
+            <select
+              value={newPlayer.pos}
+              onChange={(e) => setNewPlayer((s) => ({ ...s, pos: e.target.value }))}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-black"
+            >
+              {POS.map((pos) => (
+                <option key={pos} value={pos}>{pos}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 mt-5">
+          <button
+            type="button"
+            onClick={() => setAddOpen(false)}
+            className="px-3 py-2 text-sm rounded-lg bg-gray-100 hover:bg-gray-200"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={addPlayer}
+            className="px-3 py-2 text-sm rounded-lg bg-black text-white hover:bg-gray-900"
+          >
+            Añadir
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Modal para añadir participante
+  const addParticipantModal = addParticipantOpen && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={() => setAddParticipantOpen(false)} />
+      <div className="relative w-full max-w-sm bg-white rounded-2xl shadow-xl p-5">
+        <h3 className="text-lg font-bold mb-4">Añadir Participante</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-semibold mb-1">Nombre del participante</label>
+            <input
+              type="text"
+              value={newParticipantName}
+              onChange={(e) => setNewParticipantName(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-black"
+              placeholder="Nombre del participante"
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 mt-5">
+          <button
+            type="button"
+            onClick={() => setAddParticipantOpen(false)}
+            className="px-3 py-2 text-sm rounded-lg bg-gray-100 hover:bg-gray-200"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={addParticipant}
+            className="px-3 py-2 text-sm rounded-lg bg-black text-white hover:bg-gray-900"
+          >
+            Añadir
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-100 overflow-x-hidden">
+      <div className="max-w-6xl mx-auto p-4 space-y-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+            <h1 className="text-2xl font-black text-gray-900">⚽ Fantasy Amigas del Duero</h1>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-2">
+            <TabButton active={tab === "equipos"} onClick={() => setTab("equipos")}>
+              Equipos
+            </TabButton>
+            <TabButton active={tab === "totw"} onClick={() => setTab("totw")}>
+              Equipo de la Semana
+            </TabButton>
+            <TabButton active={tab === "scores"} onClick={() => setTab("scores")}>
+              Puntuaciones
+            </TabButton>
+            <TabButton active={tab === "clasificacion"} onClick={() => setTab("clasificacion")}>
+              Clasificación
+            </TabButton>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+          {tab === "equipos" && <ViewEquipos />}
+          {tab === "totw" && <ViewTOTW />}
+          {tab === "scores" && <ViewScores />}
+          {tab === "clasificacion" && <ViewClassification />}
+        </div>
+      </div>
+
+      {modalView}
+      {addPlayerModal}
+      {addParticipantModal}
       <ConfirmDialog
         open={confirm.open}
         title={confirm.title}
         body={confirm.body}
-        onConfirm={() => confirm.onYes && confirm.onYes()}
+        onConfirm={confirm.onYes}
         onCancel={() => setConfirm({ open: false, title: "", body: "", onYes: null })}
       />
     </div>
   );
 }
 
-function App() {
-  return <AppFantasy />;
-}
-
-export default App;
+export default AppFantasy;
