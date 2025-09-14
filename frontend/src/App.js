@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import "./App.css";
 
 // ===================== Utilidades =====================
@@ -647,7 +647,8 @@ function AppFantasy() {
   }
 
   function ViewScores() {
-    const scoresScrollRef = useRef(null);
+    const [editingPlayer, setEditingPlayer] = useState(null);
+    const [tempValue, setTempValue] = useState("");
     
     const positionFiltered = players.filter((p) => hasRole(p, "DL") || hasRole(p, "MC") || hasRole(p, "DF") || hasRole(p, "PT"));
     const sorted = positionFiltered.sort((a, b) => {
@@ -657,24 +658,142 @@ function AppFantasy() {
       return a.name.localeCompare(b.name);
     });
 
-    // Función para cambiar puntos sin hacer scroll
-    const changePointsWithoutScroll = (id, delta) => {
-      const currentScrollTop = scoresScrollRef.current?.scrollTop || 0;
+    // Manejar entrada manual de puntos
+    const handleEditStart = (playerId, currentPoints) => {
+      setEditingPlayer(playerId);
+      setTempValue(currentPoints.toString());
+    };
+
+    const handleEditSave = (playerId) => {
+      const newValue = parseInt(tempValue) || 0;
+      const currentValue = currentPoints[playerId] || 0;
+      const delta = newValue - currentValue;
       
-      setState((s) => {
-        const jornadas = s.jornadas.slice();
-        const jornadaData = { ...jornadas[s.currentJornada - 1] };
-        jornadaData.points = adjustPoints(jornadaData.points, id, delta);
-        jornadas[s.currentJornada - 1] = jornadaData;
-        return { ...s, jornadas };
-      });
+      if (delta !== 0) {
+        changePoints(playerId, delta);
+      }
       
-      // Restaurar posición del scroll después del re-render
-      setTimeout(() => {
-        if (scoresScrollRef.current) {
-          scoresScrollRef.current.scrollTop = currentScrollTop;
-        }
-      }, 0);
+      setEditingPlayer(null);
+      setTempValue("");
+    };
+
+    const handleEditCancel = () => {
+      setEditingPlayer(null);
+      setTempValue("");
+    };
+
+    // Componente individual de jugadora
+    const PlayerRow = ({ player }) => {
+      const points = currentPoints[player.id] || 0;
+      const notPlayed = currentNotPlayed[player.id];
+      const isEditing = editingPlayer === player.id;
+
+      return (
+        <div className="p-4 bg-white border-b border-gray-100 hover:bg-gray-50 transition-colors">
+          <div className="flex items-center justify-between gap-4">
+            {/* Info de la jugadora */}
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <BadgePosMulti roles={player.roles} />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-gray-900 truncate">{player.name}</div>
+                <div className="text-xs text-gray-500">{player.roles.join(", ")}</div>
+              </div>
+            </div>
+
+            {/* Controles de puntuación */}
+            <div className="flex items-center gap-4 shrink-0">
+              {/* Controles rápidos +/- */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => changePoints(player.id, -1)}
+                  className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-600 font-bold text-sm flex items-center justify-center transition-colors"
+                  disabled={isEditing}
+                >
+                  −
+                </button>
+                
+                {/* Display/Editor de puntos */}
+                {isEditing ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      value={tempValue}
+                      onChange={(e) => setTempValue(e.target.value)}
+                      className="w-16 px-2 py-1 text-center border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleEditSave(player.id);
+                        if (e.key === 'Escape') handleEditCancel();
+                      }}
+                    />
+                    <button
+                      onClick={() => handleEditSave(player.id)}
+                      className="text-green-600 hover:text-green-700 text-sm"
+                    >
+                      ✓
+                    </button>
+                    <button
+                      onClick={handleEditCancel}
+                      className="text-red-600 hover:text-red-700 text-sm"
+                    >
+                      ✗
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleEditStart(player.id, points)}
+                    className={`w-16 h-8 text-center font-bold rounded hover:bg-gray-100 transition-colors ${notPlayed ? "text-gray-500" : pointsColorClass(points)}`}
+                    title="Click para editar"
+                  >
+                    {notPlayed ? "−" : points}
+                  </button>
+                )}
+                
+                <button
+                  type="button"
+                  onClick={() => changePoints(player.id, 1)}
+                  className="w-8 h-8 rounded-full bg-green-100 hover:bg-green-200 text-green-600 font-bold text-sm flex items-center justify-center transition-colors"
+                  disabled={isEditing}
+                >
+                  +
+                </button>
+              </div>
+
+              {/* Checkbox "No jugó" */}
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={notPlayed}
+                  onChange={(e) => {
+                    setState((s) => {
+                      const jornadas = s.jornadas.slice();
+                      const jornadaData = { ...jornadas[s.currentJornada - 1] };
+                      jornadaData.notPlayed = { ...jornadaData.notPlayed, [player.id]: e.target.checked };
+                      jornadas[s.currentJornada - 1] = jornadaData;
+                      return { ...s, jornadas };
+                    });
+                  }}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-1 focus:ring-blue-500"
+                  disabled={isEditing}
+                />
+                <span className="text-gray-600 whitespace-nowrap select-none">No jugó</span>
+              </label>
+
+              {/* Botón eliminar */}
+              <button
+                type="button"
+                onClick={() => deletePlayer(player.id)}
+                className="w-8 h-8 rounded-full bg-red-50 hover:bg-red-100 text-red-600 flex items-center justify-center transition-colors"
+                title="Eliminar jugadora"
+                disabled={isEditing}
+              >
+                🗑️
+              </button>
+            </div>
+          </div>
+        </div>
+      );
     };
 
     function deletePlayer(playerId) {
@@ -711,87 +830,59 @@ function AppFantasy() {
     }
 
     return (
-      <div className="space-y-4 overflow-x-hidden">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <h2 className="text-xl font-bold">📊 Editor de Puntuaciones - Jornada {state.currentJornada}</h2>
+      <div className="space-y-6 overflow-x-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">📊 Editor de Puntuaciones</h2>
+            <p className="text-sm text-gray-600 mt-1">Jornada {state.currentJornada} • {sorted.length} jugadoras</p>
+          </div>
           <button
             type="button"
             onClick={() => setAddOpen(true)}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm"
           >
             + Añadir jugadora
           </button>
         </div>
+
+        {/* Lista de jugadoras - REDISEÑO COMPLETO */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <div ref={scoresScrollRef} className="max-h-[60vh] overflow-y-auto">
-            <div className="divide-y divide-gray-100">
-              {sorted.map((player) => {
-                const points = currentPoints[player.id] || 0;
-                const notPlayed = currentNotPlayed[player.id];
-                return (
-                  <div key={player.id} className="p-4 flex items-center justify-between gap-4 min-w-0">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <BadgePosMulti roles={player.roles} />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-gray-900 truncate">{player.name}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => changePointsWithoutScroll(player.id, -1)}
-                          className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-600 font-bold text-sm flex items-center justify-center transition"
-                        >
-                          −
-                        </button>
-                        <div className={`w-12 text-center font-bold ${notPlayed ? "text-gray-500" : pointsColorClass(points)}`}>
-                          {notPlayed ? "−" : points}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => changePointsWithoutScroll(player.id, 1)}
-                          className="w-8 h-8 rounded-full bg-green-100 hover:bg-green-200 text-green-600 font-bold text-sm flex items-center justify-center transition"
-                        >
-                          +
-                        </button>
-                      </div>
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={notPlayed}
-                          onChange={(e) => {
-                            const currentScrollTop = scoresScrollRef.current?.scrollTop || 0;
-                            setState((s) => {
-                              const jornadas = s.jornadas.slice();
-                              const jornadaData = { ...jornadas[s.currentJornada - 1] };
-                              jornadaData.notPlayed = { ...jornadaData.notPlayed, [player.id]: e.target.checked };
-                              jornadas[s.currentJornada - 1] = jornadaData;
-                              return { ...s, jornadas };
-                            });
-                            // Restaurar scroll
-                            setTimeout(() => {
-                              if (scoresScrollRef.current) {
-                                scoresScrollRef.current.scrollTop = currentScrollTop;
-                              }
-                            }, 0);
-                          }}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="text-gray-600 whitespace-nowrap">No jugó</span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => deletePlayer(player.id)}
-                        className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-600 flex items-center justify-center transition ml-2"
-                        title="Eliminar jugadora"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+          {/* Header de la tabla */}
+          <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200">
+            <div className="flex items-center justify-between text-sm font-semibold text-gray-700">
+              <span>Jugadora</span>
+              <div className="flex items-center gap-8">
+                <span>Puntuación</span>
+                <span>Estado</span>
+                <span>Acciones</span>
+              </div>
+            </div>
+          </div>
+          
+          {/* Lista scrolleable sin re-renders */}
+          <div className="max-h-[70vh] overflow-y-auto">
+            {sorted.map((player) => (
+              <PlayerRow key={player.id} player={player} />
+            ))}
+          </div>
+        </div>
+
+        {/* Footer con estadísticas */}
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-6">
+              <span className="text-gray-600">
+                <span className="font-semibold text-gray-900">{sorted.filter(p => !currentNotPlayed[p.id]).length}</span> jugaron
+              </span>
+              <span className="text-gray-600">
+                <span className="font-semibold text-gray-900">{sorted.filter(p => currentNotPlayed[p.id]).length}</span> no jugaron
+              </span>
+            </div>
+            <div className="text-gray-600">
+              Total puntos: <span className="font-semibold text-gray-900">
+                {sorted.reduce((sum, p) => sum + (currentNotPlayed[p.id] ? 0 : (currentPoints[p.id] || 0)), 0)}
+              </span>
             </div>
           </div>
         </div>
@@ -904,6 +995,21 @@ function AppFantasy() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <h2 className="text-xl font-bold">🏆 Clasificación</h2>
           <div className="flex flex-wrap items-center gap-2">
+            {/* Selector de jornada (solo si está en modo jornada) - MOVIDO A LA IZQUIERDA */}
+            {classificationMode === "jornada" && (
+              <select
+                value={classificationJornada}
+                onChange={(e) => setClassificationJornada(parseInt(e.target.value, 10))}
+                className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm"
+              >
+                {Array.from({ length: 26 }, (_, i) => (
+                  <option key={i + 1} value={i + 1}>
+                    Jornada {i + 1}
+                  </option>
+                ))}
+              </select>
+            )}
+            
             {/* Selector de modo como botones */}
             <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
               <button
@@ -929,21 +1035,6 @@ function AppFantasy() {
                 Por Jornada
               </button>
             </div>
-            
-            {/* Selector de jornada (solo si está en modo jornada) */}
-            {classificationMode === "jornada" && (
-              <select
-                value={classificationJornada}
-                onChange={(e) => setClassificationJornada(parseInt(e.target.value, 10))}
-                className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm"
-              >
-                {Array.from({ length: 26 }, (_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    Jornada {i + 1}
-                  </option>
-                ))}
-              </select>
-            )}
           </div>
         </div>
 
@@ -1294,24 +1385,23 @@ function AppFantasy() {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          {tab === "equipos" && <ViewEquipos />}
-          {tab === "totw" && <ViewTOTW />}
-          {tab === "scores" && <ViewScores />}
-          {tab === "clasificacion" && <ViewClassification />}
-        </div>
-      </div>
+        {tab === "equipos" && <ViewEquipos />}
+        {tab === "totw" && <ViewTOTW />}
+        {tab === "scores" && <ViewScores />}
+        {tab === "clasificacion" && <ViewClassification />}
 
-      {modalView}
-      {addPlayerModal}
-      {addParticipantModal}
-      <ConfirmDialog
-        open={confirm.open}
-        title={confirm.title}
-        body={confirm.body}
-        onConfirm={confirm.onYes}
-        onCancel={() => setConfirm({ open: false, title: "", body: "", onYes: null })}
-      />
+        {modalView}
+        {addPlayerModal}
+        {addParticipantModal}
+        
+        <ConfirmDialog
+          open={confirm.open}
+          title={confirm.title}
+          body={confirm.body}
+          onConfirm={confirm.onYes}
+          onCancel={() => setConfirm({ open: false, title: "", body: "", onYes: null })}
+        />
+      </div>
     </div>
   );
 }
