@@ -228,7 +228,7 @@ function PlayerCard({ player, points, notPlayed, isCaptain, mvp }) {
   return (
     <div className="relative h-28 w-full rounded-2xl bg-white/90 backdrop-blur border border-gray-200 shadow-sm p-3 flex flex-col items-center justify-center gap-1">
       {showC && (
-        <div className="absolute -top-2 -right-2 w-7 h-7 rounded-full border border-yellow-500 bg-yellow-300 text-[11px] font-bold flex items-center justify-center shadow" title="Capitana">C</div>
+        <div className="absolute -top-2 -right-2 w-7 h-7 rounded-full border-2 border-yellow-500 bg-yellow-400 text-white text-[11px] font-bold flex items-center justify-center shadow" title="Capitana">C</div>
       )}
       {showStar && (
         <div className="absolute -top-2 -right-2">
@@ -453,6 +453,38 @@ function AppFantasy() {
         return { ...s, jornadas };
       });
     }
+    setModal(null);
+  }
+
+  // **NUEVA FUNCIÓN: Asignar capitana**
+  function setCaptain(participantIndex, playerId) {
+    setState((s) => {
+      const jornadas = s.jornadas.slice();
+      const jornadaData = { ...jornadas[s.currentJornada - 1] };
+      const parts = jornadaData.participants.slice();
+      const pt = { ...parts[participantIndex] };
+      pt.captainId = playerId;
+      parts[participantIndex] = pt;
+      jornadaData.participants = parts;
+      jornadas[s.currentJornada - 1] = jornadaData;
+      return { ...s, jornadas };
+    });
+    setModal(null);
+  }
+  
+  // **NUEVA FUNCIÓN: Quitar capitanía**
+  function removeCaptain(participantIndex) {
+    setState((s) => {
+      const jornadas = s.jornadas.slice();
+      const jornadaData = { ...jornadas[s.currentJornada - 1] };
+      const parts = jornadaData.participants.slice();
+      const pt = { ...parts[participantIndex] };
+      pt.captainId = null;
+      parts[participantIndex] = pt;
+      jornadaData.participants = parts;
+      jornadas[s.currentJornada - 1] = jornadaData;
+      return { ...s, jornadas };
+    });
     setModal(null);
   }
 
@@ -860,8 +892,8 @@ function AppFantasy() {
             </div>
           </div>
           
-          {/* Lista scrolleable sin re-renders */}
-          <div className="max-h-[70vh] overflow-y-auto">
+          {/* **CAMBIO: Eliminado el contenedor con scroll** */}
+          <div>
             {sorted.map((player) => (
               <PlayerRow key={player.id} player={player} />
             ))}
@@ -1219,60 +1251,94 @@ function AppFantasy() {
       </div>
     );
   }
+  
+  // **CAMBIO: Modal actualizado para manejar la capitanía**
+  const modalView = modal && (() => {
+    const participant = currentJornadaData.participants[modal.participantIndex];
+    if (!participant) return null;
+  
+    const currentPlayerId = participant.lineup[modal.role]?.[modal.index];
+    const isSlotFilled = !!currentPlayerId;
+    const isCurrentPlayerCaptain = isSlotFilled && currentPlayerId === participant.captainId;
 
-  // Modal para seleccionar jugador
-  const modalView = modal && (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={() => setModal(null)} />
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl max-h-[80vh] overflow-hidden">
-        <div className="p-4 border-b border-gray-200">
-          <h3 className="text-lg font-bold">Seleccionar Jugadora</h3>
-          <p className="text-sm text-gray-600">Posición: {modal.role}</p>
-        </div>
-        <div className="overflow-y-auto max-h-[60vh]">
-          <div className="p-2">
-            {players
-              .filter((p) => hasRole(p, modal.role))
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map((player) => {
-                const points = currentPoints[player.id] || 0;
-                const notPlayed = currentNotPlayed[player.id];
-                return (
-                  <button
-                    key={player.id}
-                    type="button"
-                    onClick={() => assignToSlotForTarget(player.id)}
-                    className="w-full p-3 text-left rounded-lg hover:bg-gray-50 transition border-b border-gray-100 last:border-b-0"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <BadgePosMulti roles={player.roles} />
-                        <div>
-                          <div className="font-semibold">{player.name}</div>
-                          <div className="text-xs text-gray-500">{player.roles.join(", ")}</div>
-                        </div>
-                      </div>
-                      <div className={`text-sm font-semibold ${notPlayed ? "text-gray-500" : pointsColorClass(points)}`}>
-                        {notPlayed ? "No jugó" : `${points} pts`}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            {currentParticipant?.lineup[modal.role][modal.index] && (
+    const availablePlayers = players
+      .filter((p) => hasRole(p, modal.role))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/40" onClick={() => setModal(null)} />
+        <div className="relative w-full max-w-md bg-white rounded-2xl shadow-xl max-h-[80vh] flex flex-col">
+          <div className="p-4 border-b border-gray-200">
+            <h3 className="text-lg font-bold">
+              {isSlotFilled ? "Gestionar Jugadora" : "Seleccionar Jugadora"}
+            </h3>
+            <p className="text-sm text-gray-600">Posición: {modal.role}</p>
+          </div>
+          
+          {/* Opciones para jugadora ya seleccionada */}
+          {isSlotFilled && (
+            <div className="p-2 space-y-2 border-b border-gray-200">
+              {!isCurrentPlayerCaptain ? (
+                <button
+                  type="button"
+                  onClick={() => setCaptain(modal.participantIndex, currentPlayerId)}
+                  className="w-full p-3 text-center rounded-lg bg-yellow-100 hover:bg-yellow-200 text-yellow-800 font-semibold transition"
+                >
+                  Hacer Capitana (x2 Pts)
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => removeCaptain(modal.participantIndex)}
+                  className="w-full p-3 text-center rounded-lg bg-yellow-400 hover:bg-yellow-500 text-white font-semibold transition"
+                >
+                  Quitar Capitanía
+                </button>
+              )}
               <button
                 type="button"
                 onClick={clearSlotForTarget}
-                className="w-full p-3 text-center rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-semibold transition mt-2"
+                className="w-full p-3 text-center rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-semibold transition"
               >
                 Quitar Jugadora
               </button>
-            )}
+            </div>
+          )}
+
+          <div className="overflow-y-auto">
+            <div className="p-2">
+              {availablePlayers.map((player) => {
+                  const points = currentPoints[player.id] || 0;
+                  const notPlayed = currentNotPlayed[player.id];
+                  return (
+                    <button
+                      key={player.id}
+                      type="button"
+                      onClick={() => assignToSlotForTarget(player.id)}
+                      className="w-full p-3 text-left rounded-lg hover:bg-gray-50 transition border-b border-gray-100 last:border-b-0"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <BadgePosMulti roles={player.roles} />
+                          <div>
+                            <div className="font-semibold">{player.name}</div>
+                            <div className="text-xs text-gray-500">{player.roles.join(", ")}</div>
+                          </div>
+                        </div>
+                        <div className={`text-sm font-semibold ${notPlayed ? "text-gray-500" : pointsColorClass(points)}`}>
+                          {notPlayed ? "No jugó" : `${points} pts`}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  })();
 
   // Modal para añadir jugador
   const addPlayerModal = addOpen && (
